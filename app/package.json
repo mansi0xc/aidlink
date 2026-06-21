@@ -10,6 +10,10 @@
     "provision": "tsx src/provision.ts",
     "invoke": "tsx src/invoke.ts",
     "test:phase1": "tsx --test tests/phase1.integration.test.ts",
+    "test:local": "tsx --test tests/phase2-delegation.local.test.ts tests/phase2-cross-tenant.mocked.test.ts tests/audit.local.test.ts",
+    "phase2:cross-tenant": "tsx src/phase2-cross-tenant.ts",
+    "phase2:delegation": "tsx src/phase2-delegation.ts",
+    "account-status": "tsx src/account-status.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json --noEmit"
   },

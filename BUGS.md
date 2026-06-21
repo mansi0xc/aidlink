@@ -414,6 +414,22 @@ across both the 20k→40k change and the small charge below, so mints (and at le
 charges) do **not** surface in the caller's usage feed — `balance.available` is the only
 reliable signal. Still far short of the ~4 tokens/action the claim page implies; holding.
 
+### Re-poll 2026-06-22 — a SECOND API key claimed for the same DID adds NO credit
+A new API key was claimed for the **same** DID (`did:t3n:5cc2…7f2d`) and `getUsage()`
+re-polled: balance **unchanged at 39,989 base units**, balance-row **`version` still 3** (a
+fresh mint would increment it), `entries` still empty. So **re-claiming a key for an
+existing DID is not a workaround for BUG-005** — the welcome grant is once-per-DID and this
+DID is already `status: "active"`/admitted, so no additional credit is minted. Expected
+behaviour, recorded because the question came up explicitly: the path to a real balance is a
+corrected mint on this DID (or a brand-new DID), not another claim against the same one.
+**Closed 2026-06-22:** ran `auth-gate` with the full new key. It derives a **different**
+wallet address (`0x54df…649e`) than the original key (`0x497e…f189`) but **authenticates to
+the same DID** (`did:t3n:5cc2…7f2d`), with **no `eth_auth_map_conflict`** and the **balance
+unchanged at 39,989** base units. So a second claim for an existing DID **links an additional
+ETH authenticator wallet** to that DID — it neither spawns a new DID nor mints new credit.
+(Two wallets → one DID, consistent with the multi-authenticator model behind
+`eth_authenticator_limit` in BUG-009.)
+
 ### Metering correction — `tenant.tenant.me()` IS metered (~11 base units); `getUsage()` is not
 While running the read-only diagnostic, `getUsage()` bracketing showed `tenant.tenant.me()`
 cost **~11 base units** (a successful control-plane read), whereas `getUsage()` itself is
@@ -575,6 +591,25 @@ grant via `buildDelegationCredential` — so this also cleanly separates the two
    `submitUserInput` (which would surface `EmailNotVerified` if unverified — diagnostic but
    costs tokens, blocked on BUG-005) or the dashboard. Deferred to the dashboard check.
    (Net new gap: no free read exposes a DID's own profile/verification state.)
+   **RESOLVED 2026-06-22 via the dashboard** (`testnet.network.terminal3.io` → Profile tab):
+   the DID **already has a partial profile** — legal name `first="Olivia"`, `last="Gungin"`
+   (middle empty), and an email **on file**, `olivygungin@gmail.com`. Location
+   (country/province/city), gender, marital status and education are all empty. **Impact:**
+   `{{profile.first_name}}` / `{{profile.last_name}}` should resolve **without** any
+   `submitUserInput` step — so the cheap first live check (`probe-placeholder`, default field
+   `first_name`) is viable as-is, and Phase 1's self-call path no longer needs a profile
+   write for those fields. **Caveat (note the distinction):** the dashboard shows an email is
+   *present*, not that it is *verified*. The `EmailNotVerified` gate on `submitUserInput` keys
+   off verification, not mere presence — so if we later need to WRITE additional profile
+   fields (e.g. the bank-account fallback in BUG-006), whether an OTP roundtrip is still
+   required remains unconfirmed. For just *reading* `{{profile.first_name/last_name}}`, the
+   profile is already sufficient.
+   **Related dashboard note (agent-auth / question #4 + BUG-010):** the **AI Agents** tab
+   exists with a "New agent" button and an Agent-DID / Authorized-contract table, currently
+   **empty**. This is the dashboard surface for the agent-auth grant (authorized scripts +
+   allowed hosts). It likely can't be populated until a contract is registered — i.e. still
+   downstream of BUG-005. The actual form fields (and whether they set the egress allow-list
+   per BUG-010) are pending a look once registration is possible.
 2. **Whether a self-call (`pii_did` = own DID) resolves `{{profile.*}}` with no explicit
    agent-auth grant**, or whether even self-calls require the contract to be listed as an
    authorized script. The WIT comment ties resolution to the agent-auth grant unconditionally;
@@ -723,3 +758,108 @@ reference for `http-with-placeholders`. Its README teaching the pre-placeholder 
 model (and an incomplete manifest) will actively misdirect anyone implementing the
 PII-safe path. Regenerate the README from the 0.4.x source: correct the privacy
 description, add `http_with_placeholders` to the manifest, and bump the version.
+
+---
+
+## BUG-012 — Delegation credential `contract` field rejects z-tenant script names (`ContractTooLong`); the field only fits short system-contract ids
+
+**Severity:** Medium (blocks the obvious wiring of delegation to a z-tenant contract; undocumented length cap + undocumented "what value goes here")
+**Area:** Delegation / `buildDelegationCredential`
+**Status:** Confirmed empirically (Phase 2 build)
+
+### What we were trying to do
+Build a human-helper delegation credential authorizing the helper to call AidLink's
+`disburse-payout` on our z-tenant contract. The natural value for the credential's
+`contract` field is the contract's canonical script name, `z:<tid>:aidlink`.
+
+### What happens
+`buildDelegationCredential({ … contract: "z:<40-hex>:aidlink" … })` throws
+**`ContractTooLong`** (raised by `validateCredentialBody`). Probing the boundary:
+```
+len 40  → OK
+len 48  → ContractTooLong
+z:<40-hex>:aidlink  (len 50) → ContractTooLong
+"tee:aidlink" / "z:aidlink"  → OK
+```
+So the field caps somewhere in (40, 48], and a full z-tenant script name (`z:` + 40-hex
+tid + `:` + tail = 50+ chars) **never fits**.
+
+### What the docs say
+Nothing. `DelegationCredential.contract` is documented only as *"Contract id, e.g.
+`tee:payroll`"* — a short **system**-contract id. There is no stated max length, and no
+guidance on what a **z-tenant** integrator should put here, nor how that value is matched
+against the actual invoked script `z:<tid>:<tail>` during host-side authorization.
+
+### Why it matters
+The credential is clearly modeled around the built-in system contracts (`tee:payroll`,
+`tee:user`, …), whose ids are short. A third-party z-tenant — the entire point of the ADK
+— cannot put its real contract identity in the field. You're forced to invent a short
+logical id (we use `z:aidlink`) and *hope* the host's grant-matching maps it to the real
+`z:<tid>:aidlink` script — but the mapping rule is undocumented and untestable without the
+sandbox. This is a structural gap between the delegation design and the z-tenant model.
+
+### Workaround in AidLink
+Use a short logical id (`z:aidlink`, overridable via `AIDLINK_CONTRACT_ID`) in the
+credential, documented at both call sites. Whether the host accepts this for a z-tenant
+contract is an open live question (added to the Phase 2 live-run checklist).
+
+### Suggested fix
+Document the `contract` max length, state explicitly what z-tenant integrators put there,
+and document how the credential `contract` is matched to a `z:<tid>:<tail>` script during
+authorization — or widen the field to admit full z-tenant script names.
+
+---
+
+## BUG-013 — Dashboard "Authorized contract" dropdown is a static catalog of generic example intents, unrelated to the caller's real tenant state
+
+**Severity:** Medium/High (casts doubt on whether the documented "authorize your TEE contract via the dashboard" flow actually works for custom developer contracts — the only documented way to grant agent access / egress, per BUG-001/BUG-010)
+**Area:** Dashboard / agent-auth grant flow
+**Status:** Observed on `testnet.network.terminal3.io` → AI Agents → "Create a new AI Agent"
+
+### What we were trying to do
+Complete the agent-auth grant the docs point to (`delegate-access-to-agent.md`: "Select
+`Authorized TEE contract`") — the dashboard step that is supposed to authorize our
+registered AidLink contract (and, per BUG-010, set its egress allow-list).
+
+### What we found
+The **Authorized contract** dropdown is populated with a long, generic catalog of unrelated
+example intents spanning many business verticals — **30+ distinct options** observed while
+scrolling, none of which reference AidLink or any contract on this account:
+- Account/auth: Verify identity, Create account, Reset password, Change password, Enable
+  two-factor, Update profile, Update contact info
+- Banking: Apply for a personal loan, Check account balance, Transfer funds, Open savings
+  account, Request loan extension, Claim insurance, Report fraud
+- E-commerce: Order a product, Track order, Return item, Request refund, Process payment
+- Travel: Book flight, Reserve hotel, Purchase ticket
+- Subscriptions: Cancel subscription, Renew service, Upgrade plan, Downgrade plan
+- Support/scheduling: Submit application, Schedule meeting, Request information, File
+  complaint, Submit feedback, Book an appointment, Register event, Download statement
+
+### Why this looks like static seed content, not a live list
+This account has **zero registered contracts** (registration is blocked on BUG-005's empty
+balance) yet the dropdown is full of options — and none of them correspond to anything this
+tenant owns. A live, tenant-aware control would be empty (or show only this tenant's
+contracts). So the dropdown appears to be **static placeholder/seed data unrelated to the
+caller's real tenant state**.
+
+### Why it matters
+This is the *only* documented mechanism to authorize a custom TEE contract for agent access
+and to set its egress allow-list (BUG-001 showed the docs frame delegation as dashboard-only;
+BUG-010 showed egress is described as a per-user dashboard grant). If that dropdown isn't
+wired to real developer contracts, then the documented end-to-end "authorize your contract"
+path may not actually be functional for third-party z-tenant contracts at all — leaving the
+SDK-native delegation primitives (BUG-001) as the only working route. We cannot fully confirm
+this until a contract is registered (post-BUG-005), but the evidence is strong.
+
+### Impact on AidLink — not blocking
+Phase 2's human-helper authorization already uses the **SDK-native** delegation path
+(`buildDelegationCredential` / `signCredential` / `revokeDelegation`, BUG-001), not this
+dashboard flow, so AidLink does not depend on it. The open risk it leaves is the **egress
+allow-list** (BUG-010): if the dashboard can't authorize our contract's outbound host and no
+SDK method does either, the live payout call could be stuck at `egress_denied`. Tracked on the
+Phase 1 live-run checklist.
+
+### Suggested fix
+Make the "Authorized contract" control reflect the authenticated tenant's actually-registered
+contracts (or clearly label the catalog as examples), and document the SDK equivalent for
+setting a contract's egress allow-list so the flow doesn't depend solely on the dashboard.

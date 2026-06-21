@@ -48,13 +48,31 @@ Show the terminal. These all run today, zero sandbox dependency:
    - bad bearer → **401**.
    The masking happens *outside* the contract; the contract never holds the full number.
 
-4. **The developer log is itself a deliverable.** Open `BUGS.md`: seven grounded entries
-   (token-grant unit bug, undocumented SDK delegation surface, missing OpenAPI, the
-   resolved-profile schema gap, the test-user onboarding gap …), each with exact errors,
-   doc citations, and suggested fixes.
+4. **Phase 2 is proven locally too — with the real SDK crypto, offline.**
+   `yarn tsx --test tests/phase2-*.ts tests/audit.local.test.ts` → 12 passing:
+   - **Delegation (real `@terminal3/t3n-sdk` primitives, no mock):** `buildDelegationCredential`
+     produces a credential that is **time-boxed** (`not_after = not_before + window`,
+     expires outside it), **function-scoped** (sorted/deduped/lowercased), and the
+     beneficiary's `signCredential` signature **recovers to the beneficiary's own address**
+     via `ethRecoverEip191`. `validateCredentialBody` accepts the good one and rejects an
+     empty function set — the same invariants the Rust side enforces.
+   - **Cross-tenant control flow (SDK-client boundary mocked):** the disbursement agent
+     calls the verification agent with the exact `executeBusinessContract({ tenant, contract,
+     functionName: "check-eligibility", input })` shape, and **a denied eligibility never
+     reaches `disburse`** — the core safety invariant.
+   - **Audit ledger:** hash-chained; tampering with any row breaks `verify()`; accounts only
+     ever rendered masked.
 
-> Takeaway line: "Everything that defines the privacy guarantee — the contract, the tests,
-> the endpoint behavior — is built and verified. What's left is a metered button-press."
+5. **The developer log is itself a deliverable.** Open `BUGS.md`: **12** grounded entries
+   (token-grant unit bug, undocumented SDK delegation surface, missing OpenAPI, the
+   resolved-profile schema gap, the test-user onboarding gap, three doc/SDK error-handling
+   and egress contradictions found in a dedicated pass, the reference-repo README that
+   contradicts its own code, the delegation `ContractTooLong` z-tenant gap …), each with
+   exact errors, doc citations, and suggested fixes.
+
+> Takeaway line: "Everything that defines the privacy and delegation guarantees — the
+> contract, both phases' tests, the endpoint behavior — is built and verified. What's left
+> is a metered button-press."
 
 ---
 
@@ -83,9 +101,13 @@ Frame as a ready pipeline, one command away:
 
 ```
 yarn auth-gate        # ALREADY GREEN against the live sandbox — real DID + balance returned
-AIDLINK_CONFIRM_METERED=1 yarn provision   # register aidlink.wasm, create+seed KV maps
-AIDLINK_CONFIRM_METERED=1 yarn invoke      # FIRST live spend = the cheap probe-placeholder
+AIDLINK_CONFIRM_METERED=1 yarn provision              # register aidlink.wasm, create+seed KV maps
+AIDLINK_CONFIRM_METERED=1 yarn invoke                 # FIRST live spend = the cheap probe-placeholder
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-cross-tenant.ts   # B asks A across the tenant boundary, pays out
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-delegation.ts     # helper grant → act → revoke → denied
 ```
+Every metered script is **guarded** (`AIDLINK_CONFIRM_METERED=1`) and refuses to run until
+a real balance lands — so the same commands execute unchanged the moment it does.
 
 - We already proved the live handshake works: `auth-gate` authenticated as
   `did:t3n:5cc2…7f2d` and read a real balance back from
