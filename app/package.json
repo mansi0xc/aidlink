@@ -1,0 +1,28 @@
+{
+  "name": "aidlink-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AidLink TS client: T3N ADK SDK integration for disaster-relief disbursement",
+  "scripts": {
+    "auth-gate": "tsx src/auth-gate.ts",
+    "mock-payout": "tsx mock-payout/server.ts",
+    "provision": "tsx src/provision.ts",
+    "invoke": "tsx src/invoke.ts",
+    "test:phase1": "tsx --test tests/phase1.integration.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@terminal3/t3n-sdk": "3.9.0",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

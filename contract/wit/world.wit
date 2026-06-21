@@ -1,0 +1,63 @@
+/// AidLink WIT world — disaster-relief eligibility + privacy-preserving payout.
+///
+/// Imports required host capabilities:
+///   - tenant-context:          tenant DID (to build the z:<tid>:<map> names) + cluster ts
+///   - logging:                 debug / info / error lines (proves the code path)
+///   - kv-store:                reads the private `eligibility` map and the `secrets` map
+///   - http-with-placeholders:  the payout call — the request body carries
+///                              `{{profile.bank_account}}` / `{{profile.first_name}}`
+///                              markers the host resolves from the BENEFICIARY's profile
+///                              at dispatch time, so the raw bank account number NEVER
+///                              enters WASM memory. The contract only ever holds the
+///                              unresolved template string.
+///
+/// host_capabilities manifest: ["kv_store","logging","tenant_context","http_with_placeholders"]
+///
+/// The mock payout endpoint's API key lives in the z: KV map `z:<tid>:secrets` under the
+/// key `payout_api_key`; the payout URL host must be on the contract's http_allow_list
+/// (same allowlist plain `http` uses). Both are provisioned by the tenant SDK before the
+/// contract runs — see /app provisioning scripts.
+package z:aidlink@0.1.0;
+
+world aidlink {
+    import host:tenant/tenant-context@1.0.0;
+    import host:interfaces/logging@2.1.0;
+    import host:interfaces/kv-store@2.1.0;
+    import host:interfaces/http-with-placeholders@2.1.0;
+
+    export contracts;
+}
+
+interface contracts {
+    /// Standard 3-field envelope used by all node-callable contracts.
+    /// `input`        — JSON-serialised request payload specific to the function.
+    /// `user-profile` — always None for tenant contracts (resolved host-side).
+    /// `context`      — JSON-serialised DynamicContext (node-minted, trusted).
+    record generic-input {
+        input:        option<list<u8>>,
+        user-profile: option<list<u8>>,
+        context:      option<list<u8>>,
+    }
+
+    /// Government/verification side: look up a beneficiary's eligibility flag in the
+    /// private `z:<tid>:eligibility` map and return the decision. Carries NO PII.
+    /// Input  (JSON): { "beneficiary_id": string }
+    /// Output (JSON): { "beneficiary_id", "approved": bool, "zone", "reason" }
+    check-eligibility: func(req: generic-input) -> result<list<u8>, string>;
+
+    /// Cheapest isolated check of host placeholder resolution. Templates exactly ONE
+    /// `{{profile.<field>}}` marker into a tiny body and POSTs it to `url` (passed in the
+    /// input, so this path reads NO KV maps and NO secrets — minimal fuel + host calls).
+    /// Used as Phase 1's very first live invocation to confirm the substitution mechanism
+    /// and grant wiring before spending on the full eligibility+payout flow.
+    /// Input  (JSON): { "url": string, "field": string }   // field defaults to "first_name"
+    /// Output (JSON): whatever the echo endpoint returns (e.g. { resolved_masked, was_templated })
+    probe-placeholder: func(req: generic-input) -> result<list<u8>, string>;
+
+    /// NGO/disbursement side: verify eligibility, then submit a payout instruction whose
+    /// payee + bank-account fields are `{{profile.*}}` markers resolved host-side from the
+    /// calling beneficiary's profile. The plaintext account number never enters WASM.
+    /// Input  (JSON): { "beneficiary_id": string, "amount": string, "currency": string }
+    /// Output (JSON): { "payout_id", "account_masked", "status", "beneficiary_id" }
+    disburse-payout: func(req: generic-input) -> result<list<u8>, string>;
+}
