@@ -1,12 +1,16 @@
 # AidLink — Demo Narrative (DRAFT — not recorded yet)
 
-> Working draft for the ~2-minute submission video + written walkthrough. Leads with what
-> is **fully proven locally**; presents the live testnet run as a staged, ready-to-execute
-> next step that is blocked only by a confirmed token-grant bug (BUG-005), not by missing
-> work. Update the bracketed dates before recording.
+> Working draft for the ~2-minute submission video + written walkthrough. Leads with the
+> **local proof**, then shows the **live testnet wins** (registration, eligibility,
+> cross-tenant call, delegation revoke), and frames the single remaining step
+> (the `http-with-placeholders` payout) as **platform-blocked on egress authorization**, not
+> a gap in the build. Update bracketed dates before recording.
 
-**Timeline facts to cite:** token-grant bug (BUG-005) reported to `devrel@terminal3.io` on
-**2026-06-20**; no response as of submission. Submission deadline **2026-06-22 23:59 GMT+8**.
+**Timeline facts to cite:** the original token-grant bug (BUG-005, welcome grant minted
+1,000,000× short) was reported to `devrel@terminal3.io` on **2026-06-20** and **corrected** —
+we then ran the live phases below. A second, independent platform block — egress
+authorization for custom contracts (BUG-010 + BUG-013) — remains and is reported. Submission
+deadline **2026-06-22 23:59 GMT+8**.
 
 ---
 
@@ -63,7 +67,7 @@ Show the terminal. These all run today, zero sandbox dependency:
    - **Audit ledger:** hash-chained; tampering with any row breaks `verify()`; accounts only
      ever rendered masked.
 
-5. **The developer log is itself a deliverable.** Open `BUGS.md`: **12** grounded entries
+5. **The developer log is itself a deliverable.** Open `BUGS.md`: **14** grounded entries
    (token-grant unit bug, undocumented SDK delegation surface, missing OpenAPI, the
    resolved-profile schema gap, the test-user onboarding gap, three doc/SDK error-handling
    and egress contradictions found in a dedicated pass, the reference-repo README that
@@ -96,37 +100,37 @@ Show the terminal. These all run today, zero sandbox dependency:
 
 ---
 
-## 3. "Here's exactly what happens next on live testnet" (≈30s) — staged, not missing
-Frame as a ready pipeline, one command away:
+## 3. LIVE on testnet — what actually ran (≈40s) — screen-capture the logs/
+These are real metered calls against `cn-api.sg.testnet.t3n.terminal3.io` (logs in `logs/`):
 
 ```
-yarn auth-gate        # ALREADY GREEN against the live sandbox — real DID + balance returned
-AIDLINK_CONFIRM_METERED=1 yarn provision              # register aidlink.wasm, create+seed KV maps
-AIDLINK_CONFIRM_METERED=1 yarn invoke                 # FIRST live spend = the cheap probe-placeholder
-AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-cross-tenant.ts   # B asks A across the tenant boundary, pays out
-AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-delegation.ts     # helper grant → act → revoke → denied
+yarn auth-gate                                     # real DID + balance
+AIDLINK_CONFIRM_METERED=1 yarn provision           # ✅ registered: contract_id=445; maps created + seeded
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/invoke-eligibility.ts   # ✅ ben_001→approved, ben_404→denied (real KV)
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-cross-tenant.ts  # ✅ cross-tenant executeBusinessContract → real data
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-delegation.ts    # ✅ revokeDelegation live: vcId 73Gtw_acn94b7GK92egSSg
 ```
-Every metered script is **guarded** (`AIDLINK_CONFIRM_METERED=1`) and refuses to run until
-a real balance lands — so the same commands execute unchanged the moment it does.
 
-- We already proved the live handshake works: `auth-gate` authenticated as
-  `did:t3n:5cc2…7f2d` and read a real balance back from
-  `cn-api.sg.testnet.t3n.terminal3.io`. The *connection* is demonstrated; only the
-  *metered* steps wait.
-- The very first live action is deliberately the **cheapest isolated check**:
-  `probe-placeholder` makes one host call, templating a single known-good field, to confirm
-  substitution before spending on anything else.
-- **Why it's not running in this video:** the testnet welcome grant was minted
-  **1,000,000× short** — 20,000 *base units* (0.02 tokens) instead of the promised 20,000
-  *tokens* (BUG-005, an off-by-`BASE_UNITS_PER_TOKEN` unit bug, with the exact `getUsage()`
-  payload logged). That's not enough to register a contract or run one invocation. Reported
-  to `devrel@terminal3.io` on **2026-06-20**; no response as of submission. The metered
-  scripts are **guarded so they refuse to run** until a real balance lands — so the moment
-  it does, the same commands execute unchanged.
+Live wins to show on screen:
+- **Registration** — `contract_id=445`, `z:5cc2…7f2d:aidlink` accepted by the node.
+- **Eligibility** — real decision data from the private KV map (approved + default-deny).
+- **Cross-tenant** — the disbursement side calls the verification side via
+  `executeBusinessContract` and gets real eligibility back across the boundary.
+- **Delegation revoke** — the SDK-native `revokeDelegation` succeeds live; the audit ledger
+  shows grant → revoke → denied with an intact hash chain.
 
-> Tone: this is a platform-side provisioning bug we **found, diagnosed to the exact factor,
-> reported, and engineered around** — it's a highlight of the bug-bounty track, not a gap
-> in our work.
+**The one step that's platform-blocked (not us):** the `http-with-placeholders` **payout /
+live PII resolution**. Every outbound call returns `egress_denied`, and there is **no way to
+authorize a host for a custom contract** — no SDK method exists, and the dashboard
+"Authorized contract" dropdown **does not list our registered `contract_id=445`** at all
+(confirmed live, BUG-010 + BUG-013). So we show the privacy guarantee via the **structural
+local proof** (the contract only ever emits `{{profile.*}}` templates; the mock endpoint
+rejects any unresolved marker and masks the resolved account). `yarn invoke` runs the
+resolved probe + payout unchanged the moment egress can be authorized.
+
+> Tone: two independent platform issues — a token-grant unit bug (**corrected** after we
+> reported it) and an egress-authorization gap for custom contracts — both **found,
+> diagnosed, isolated, and reported**. Headlines of the bug-bounty track, not gaps in our work.
 
 ---
 

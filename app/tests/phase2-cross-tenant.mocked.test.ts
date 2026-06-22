@@ -27,7 +27,9 @@ function recordingDisbursementClient(eligibility: EligibilityResult) {
 }
 
 const VERIFY_DID = "did:t3n:aaaa000000000000000000000000000000000000";
-const VERIFY_SCRIPT = "z:aaaa000000000000000000000000000000000000:aidlink";
+// `contract` is the tenant-local TAIL, not the full z:<tid>:tail script name — confirmed
+// live (the SDK rejects a full name with "contract must be a tenant-local contract tail").
+const VERIFY_TAIL = "aidlink";
 
 function gatewaysFor(eligibility: EligibilityResult, payout: PayoutResult, ledger?: AuditLedger) {
   const { client, calls } = recordingDisbursementClient(eligibility);
@@ -38,7 +40,7 @@ function gatewaysFor(eligibility: EligibilityResult, payout: PayoutResult, ledge
       // EXACT cross-tenant call shape under test:
       return client.executeBusinessContract(/* session */ {}, {
         tenant: VERIFY_DID,
-        contract: VERIFY_SCRIPT,
+        contract: VERIFY_TAIL,
         functionName: "check-eligibility",
         input: { beneficiary_id: beneficiaryId },
       });
@@ -62,7 +64,7 @@ test("cross-tenant eligibility call uses executeBusinessContract with the correc
   assert.equal(crossTenantCalls.length, 1, "exactly one cross-tenant call");
   assert.deepEqual(crossTenantCalls[0], {
     tenant: VERIFY_DID,
-    contract: VERIFY_SCRIPT,
+    contract: VERIFY_TAIL,
     functionName: "check-eligibility",
     input: { beneficiary_id: "ben_001" },
   });

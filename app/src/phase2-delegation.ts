@@ -14,6 +14,7 @@
  * The credential build/sign and the revoke call shape are verified in tests; here we run
  * them live once a balance exists.
  */
+import { getNodeUrl } from "@terminal3/t3n-sdk";
 import { bootstrapAgents, tenantHex } from "./lib/agents.js";
 import {
   buildHelperCredential,
@@ -66,25 +67,35 @@ async function main() {
   ledger.append({ kind: "delegation-grant", beneficiary_id: BENEFICIARY, detail: { functions: credential.functions, window_secs: WINDOW_SECS, vc_id_b64u: signed.jcsB64u.slice(0, 12) + "…" } });
   console.log(`[phase2-deleg] granted helper: functions=${credential.functions} live=${isWithinWindow(credential)}`);
 
-  // (3) Helper acts while the grant is live → expected success.
+  // (3) Helper acts while the grant is live. The contract invocation egresses (payout), so
+  // it hits the same egress wall as the probe until the allow-list is set — expected & noted.
   console.log("[phase2-deleg] (3) helper invokes disburse-payout while live …");
-  const ok = await invokeAsHelper(disbursement.client, disburseScript, VERSION, BENEFICIARY, BENEFICIARY_DID!, signed);
-  console.log("[phase2-deleg] live-grant result:", ok);
+  try {
+    const ok = await invokeAsHelper(disbursement.client, disburseScript, VERSION, BENEFICIARY, BENEFICIARY_DID!, signed);
+    console.log("[phase2-deleg] live-grant result:", JSON.stringify(ok));
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    console.log(`[phase2-deleg] (3) act ${/egress[_ ]denied/i.test(msg) ? "blocked by EGRESS wall (expected, BUG-010) — invocation can't complete the payout yet" : "failed"}: ${msg.slice(0, 140)}`);
+  }
 
-  // (4) Beneficiary revokes.
-  console.log("[phase2-deleg] (4) beneficiary revokes credential …");
-  const revoked = await revokeHelperCredential(disbursement.client, signed);
+  // (4) Beneficiary revokes — the real SDK-native revocation. NO external egress.
+  console.log("[phase2-deleg] (4) beneficiary revokes credential (live, no egress) …");
+  const revoked = await revokeHelperCredential(disbursement.client, signed, { baseUrl: getNodeUrl() });
   ledger.append({ kind: "delegation-revoke", beneficiary_id: BENEFICIARY, detail: { vc_id: revoked.vcId, revoked_functions: revoked.revokedFunctions } });
-  console.log("[phase2-deleg] revoked:", JSON.stringify(revoked));
+  console.log("[phase2-deleg] ✅ revoked (live):", JSON.stringify(revoked));
 
-  // (5) Helper tries again → expected denial.
-  console.log("[phase2-deleg] (5) helper invokes AGAIN after revoke (expect denial) …");
+  // (5) Helper tries again → denied. NOTE: the contract invocation also egresses, so a
+  // post-revoke call hits the egress wall before delegation is evaluated — we cannot cleanly
+  // distinguish "denied by revoke" from "denied by egress" via this path until egress is open.
+  console.log("[phase2-deleg] (5) helper invokes AGAIN after revoke …");
   try {
     await invokeAsHelper(disbursement.client, disburseScript, VERSION, BENEFICIARY, BENEFICIARY_DID!, signed);
-    console.error("[phase2-deleg] ✗ UNEXPECTED: post-revoke call succeeded — delegation NOT enforced.");
+    console.error("[phase2-deleg] ✗ UNEXPECTED: post-revoke call succeeded.");
   } catch (e: any) {
-    ledger.append({ kind: "delegation-denied", beneficiary_id: BENEFICIARY, detail: { error: String(e?.message ?? e).slice(0, 120) } });
-    console.log("[phase2-deleg] ✓ post-revoke call DENIED as expected:", String(e?.message ?? e).slice(0, 160));
+    const msg = String(e?.message ?? e);
+    const egress = /egress[_ ]denied/i.test(msg);
+    ledger.append({ kind: "delegation-denied", beneficiary_id: BENEFICIARY, detail: { blocked_by: egress ? "egress_wall_before_delegation_check" : "other", error: msg.slice(0, 100) } });
+    console.log(`[phase2-deleg] post-revoke call DENIED (${egress ? "egress wall — see note above" : "delegation"}): ${msg.slice(0, 140)}`);
   }
 
   console.log("\n[phase2-deleg] audit ledger:\n" + ledger.render());

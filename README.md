@@ -17,22 +17,36 @@ of T3's four reference agents (payroll, procurement, e-visa, travel).
 
 ## Status (2026-06-22)
 
-- ✅ **Everything that defines the privacy + delegation guarantees is built and verified
-  locally** — the Rust→WASM contract, both phases' test suites, and the payout endpoint
-  behavior (see [What's proven locally](#whats-proven-locally)).
-- ✅ **The live sandbox connection is proven** — `yarn auth-gate` completes a real
-  `handshake → authenticate → getUsage` against `cn-api.sg.testnet.t3n.terminal3.io` and
-  returns our DID + balance.
-- ⛔ **The metered live run is blocked by a platform-side token-grant bug, not by missing
-  work.** The testnet welcome grant was minted **1,000,000× short** — `0.04` tokens
-  (39,989 base units) instead of the promised ~20,000 tokens — so there isn't enough
-  balance to register a contract or run one invocation. Diagnosed to the exact factor,
-  reported to `devrel@terminal3.io` on **2026-06-20** (see
-  [`BUGS.md` BUG-005](./BUGS.md)); no resolution as of submission. Every metered script is
-  **guarded** and runs unchanged the moment a real balance lands.
+**Proven LIVE on testnet** (real metered calls; logs in [`logs/`](./logs)):
 
-> This is a bug we **found, diagnosed, reported, and engineered around** — it's a headline
-> of our developer-log track ([`BUGS.md`](./BUGS.md), 12 entries), not a gap in the build.
+- ✅ **Auth** — `handshake → authenticate → getUsage` against `cn-api.sg.testnet.t3n.terminal3.io`.
+- ✅ **Contract registration** — AidLink WASM registered as `z:5cc2…7f2d:aidlink`, **`contract_id=445`**.
+- ✅ **Eligibility check** — live `check-eligibility`: `ben_001`→approved (seeded), `ben_404`→denied (default-deny).
+- ✅ **Cross-tenant call** — `executeBusinessContract` returns real eligibility data across the call boundary.
+- ✅ **Delegation revoke** — SDK-native `revokeDelegation` executed live: `{ vcId: "73Gtw_acn94b7GK92egSSg" }`.
+
+**Proven LOCALLY** (offline, real SDK crypto / WASM / endpoint behavior): the Rust→WASM
+contract, 11 native + 12 app tests, the payout endpoint's mask/reject behavior, and the
+delegation credential lifecycle (time-box, scope, signature recovery). See
+[What's proven locally](#whats-proven-locally).
+
+**One step is platform-blocked, not a gap in our build:** the `http-with-placeholders`
+**payout / live PII resolution**. Every outbound call returns `egress_denied`, and authorizing
+a host for a custom contract is currently **impossible by any path** — no SDK method exists,
+and the dashboard "Authorized contract" flow **does not list our registered contract**
+(`contract_id=445`) at all, confirmed live (see [`BUGS.md` BUG-010 + BUG-013](./BUGS.md)). So
+the privacy guarantee is demonstrated by the **structural local proof** (the contract only
+ever emits `{{profile.*}}` templates; the endpoint rejects any unresolved marker) rather than a
+live resolved payout. The moment egress authorization becomes possible, `yarn invoke` runs the
+resolved probe + payout unchanged.
+
+> The original token-grant blocker (welcome grant minted 1,000,000× short — **BUG-005**) was
+> diagnosed to the exact factor, reported to `devrel@terminal3.io` on 2026-06-20, and
+> **corrected** (we now hold a real balance and ran the live phases above). The remaining
+> egress block is a second, independent platform issue we found, isolated, and reported.
+
+> 14 grounded developer-log findings in [`BUGS.md`](./BUGS.md) — bugs we **found, diagnosed,
+> reported, and engineered around**, not gaps in the build.
 
 ---
 
@@ -99,8 +113,10 @@ Each AidLink feature and the exact Terminal 3 SDK / host capability it exercises
 
 ### Phase 1 — minimum complete (single contract)
 One Rust→WASM contract: KV eligibility lookup + a `http-with-placeholders` payout whose
-payee/account fields are `{{profile.*}}` markers resolved host-side. Built, unit-tested,
-WASM-linked; provisioning + invocation staged behind the metered guard.
+payee/account fields are `{{profile.*}}` markers resolved host-side. **Live on testnet:**
+registered (`contract_id=445`), and `check-eligibility` returns real data (`ben_001`→approved,
+`ben_404`→default-deny). The payout call reaches the contract's placeholder path live but is
+held at the egress wall (see open item below).
 
 ### Phase 2 — the differentiator (two tenants + delegation)
 - **Tenant split + cross-tenant call:** the disbursement agent (B) reaches the verification
@@ -111,11 +127,13 @@ WASM-linked; provisioning + invocation staged behind the metered guard.
   attempt is denied (`NotCredentialHolder`). All SDK-native (corrected from an initial
   "dashboard-only" reading — see [`BUGS.md` BUG-001](./BUGS.md)).
 
-**Definition of done (success case via SDK, failure case proven via SDK):** the eligibility
-check crosses a tenant boundary, and a helper completes one action within its grant window
-and is denied after revocation. The credential build/sign/scope/time-box and the
-cross-tenant call shape + refuse-or-pay control flow are verified offline today; the live
-success→revoke→denial arc runs via `src/phase2-delegation.ts` once a balance lands.
+**Definition of done — status:** the eligibility check **crosses a tenant boundary live**
+(`executeBusinessContract` returned real data), and the **`revokeDelegation` step executed
+live** (`vcId 73Gtw_acn94b7GK92egSSg`). The credential build/sign/scope/time-box and the
+refuse-or-pay control flow are also verified offline. The only part not shown end-to-end live
+is the helper's *act* (a `disburse-payout` invocation) — it egresses, so it hits the same
+egress wall as the payout; until egress is authorized, a post-revoke call can't cleanly be
+attributed to the revocation vs. the egress block (noted honestly in the logs/BUGS.md).
 
 ---
 
@@ -128,11 +146,12 @@ contract/                 Rust → WASM TEE contract (wasm32-wasip2)
   src/{eligibility,payout,probe}.rs
 app/
   src/lib/{client,agents,delegation,orchestration,audit}.ts
-  src/{auth-gate,check-balance,account-status,provision,invoke}.ts
+  src/{auth-gate,check-balance,account-status,provision,invoke,invoke-eligibility}.ts
   src/{phase2-cross-tenant,phase2-delegation}.ts
   mock-payout/server.ts   PII-boundary-enforcing payout + /echo probe endpoint
   tests/                  *.local (offline) · *.mocked (SDK boundary) · *.integration (live)
-BUGS.md                   developer log — 12 bug/doc-gap findings (bug-bounty track)
+logs/                     captured output of the live testnet runs
+BUGS.md                   developer log — 14 bug/doc-gap findings (bug-bounty track)
 docs/DEMO_DRAFT.md        ~2-min demo narrative (draft)
 ```
 
@@ -160,18 +179,19 @@ yarn mock-payout           # in another shell
 # Live sandbox (proven): real DID + balance
 yarn auth-gate
 
-# Live metered (blocked on BUG-005 — guarded; runs unchanged when a balance lands):
-AIDLINK_CONFIRM_METERED=1 yarn provision
-AIDLINK_CONFIRM_METERED=1 yarn invoke          # first spend = cheap probe-placeholder
-AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-cross-tenant.ts
-AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-delegation.ts
+# Live metered — these RAN on testnet (logs in ../logs/); guarded by AIDLINK_CONFIRM_METERED=1:
+AIDLINK_CONFIRM_METERED=1 yarn provision                       # ✅ registered contract_id=445; maps seeded
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/invoke-eligibility.ts   # ✅ live eligibility (approved + default-deny)
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-cross-tenant.ts  # ✅ live cross-tenant call; payout ⛔ egress wall
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-delegation.ts    # ✅ live revoke; act ⛔ egress wall
+AIDLINK_CONFIRM_METERED=1 yarn invoke                          # probe + payout — ⛔ egress wall (re-runs unchanged once authorized)
 ```
 
 ---
 
 ## Developer log (bug-bounty track) — [`BUGS.md`](./BUGS.md)
 
-12 grounded findings, each with what we tried, the exact doc citation / error output, why
+14 grounded findings, each with what we tried, the exact doc citation / error output, why
 it matters, and a suggested fix. Highlights:
 
 - **BUG-001** — the SDK ships a full programmatic delegation/grant/revoke API
@@ -192,17 +212,21 @@ metered-vs-free read opacity.)
 
 ---
 
-## Live-run prerequisites (when the balance lands)
+## The one open item: live payout / PII resolution
 
-Tracked in `BUGS.md`; none blocks the local proof:
-1. A real token balance (BUG-005).
-2. The payout endpoint exposed publicly (tunnel) + its host on the egress allow-list — whose
-   mechanism is itself under-documented (BUG-010).
-3. A beneficiary with a populated profile + grant; for Phase 1 we use the self-call shortcut
-   (`pii_did` = our own DID) to avoid a cross-user grant (BUG-007). The DID's profile is
-   already partially populated (`first_name`/`last_name` confirmed via the dashboard), so the
-   first live check — `probe-placeholder` on `{{profile.first_name}}` — should resolve
-   without any profile write. The raw bank-account field still needs the BUG-006 fallback.
+Registration, eligibility, the cross-tenant call, and the delegation revoke all **ran live**.
+The single step not yet shown end-to-end live is the `http-with-placeholders` **payout /
+`{{profile.*}}` resolution**, blocked by **one** thing:
 
-The first live action is deliberately the cheapest isolated check (`probe-placeholder`,
-one host call) to confirm placeholder resolution before spending further.
+- **Egress authorization for a custom contract is currently impossible** (BUG-010 + BUG-013):
+  every outbound call returns `egress_denied`; no SDK method sets the allow-list, and the
+  dashboard "Authorized contract" flow does not list our registered `contract_id=445`
+  (confirmed live). This is a platform gap, reported.
+
+Everything else needed is in place: the token balance was corrected (BUG-005, resolved); the
+beneficiary profile already carries `first_name`/`last_name` (so `probe-placeholder` on
+`{{profile.first_name}}` should resolve to "Olivia" without a profile write); the raw
+bank-account field has a documented org-data-ref fallback (BUG-006). The moment egress is
+authorized, `yarn invoke` (probe + payout) and the act steps in the Phase 2 scripts run
+**unchanged** — the first call is the cheapest isolated `probe-placeholder` to confirm
+resolution before spending further.

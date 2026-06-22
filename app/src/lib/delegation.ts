@@ -129,11 +129,15 @@ export function isWithinWindow(
 export async function revokeHelperCredential(
   client: T3nClient,
   signed: SignedCredential,
-  revokedFunctions?: string[],
+  opts?: { revokedFunctions?: string[]; baseUrl?: string },
 ): Promise<RevokeDelegationResult> {
+  // NOTE: `baseUrl` is REQUIRED under Node — revokeDelegation's default script-version
+  // resolution fetches a relative URL (`/api/contracts/current?...`) that Node's fetch
+  // cannot parse (ERR_INVALID_URL). See BUGS.md BUG-014. Browsers resolve it against origin.
   return revokeDelegation({
     credentialJcsB64u: signed.jcsB64u,
     client,
-    ...(revokedFunctions ? { revokedFunctions } : {}),
+    ...(opts?.revokedFunctions ? { revokedFunctions: opts.revokedFunctions } : {}),
+    ...(opts?.baseUrl ? { baseUrl: opts.baseUrl } : {}),
   });
 }

@@ -190,7 +190,11 @@ But several capabilities **central to an agent-to-agent product** appear **nowhe
 the narrative docs and were found only in `index.d.ts`:
 - `TenantClient.executeBusinessContract(session, { tenant, contract, functionName,
   input })` — the **cross-tenant** call. This is how two agents talk to each other; it
-  is undocumented in narrative form.
+  is undocumented in narrative form. **Live-confirmed 2026-06-22:** `contract` must be the
+  target tenant's **local tail** (e.g. `"aidlink"`), NOT the full `z:<tid>:aidlink` script
+  name — a full name is rejected with `contract must be a tenant-local contract tail`. With
+  the tail it works: a live cross-tenant `check-eligibility` returned real KV data. None of
+  this (the method, the arg shapes, the tail requirement) is in the narrative docs.
 - `buildDelegationCredential`, `signCredential`, `revokeDelegation`,
   `DelegationCustodialClient` — see BUG-001.
 - `OrgDataClient.setGrants/deleteGrants`, `UserGrant`, `OrgContractGrants` — see
@@ -297,7 +301,23 @@ import line + version.
 
 **Severity:** High (blocks Phase 1 — cannot register/execute a metered contract with 0.02 tokens)
 **Area:** Token grant / metering / claim page
-**Status:** Confirmed on testnet; **work paused before any metered operation** pending a top-up
+**Status:** **RESOLVED 2026-06-22** — a corrected grant landed (balance ×1e6 → 39,989 tokens). Root cause (welcome grant minted in base units instead of tokens) stands as the original bug; the platform-side fix unblocked us.
+
+### Resolution (2026-06-22)
+A fresh `getUsage()` re-verification (run before drafting the devrel reply) found the balance
+had been corrected since the prior poll:
+```
+before:  available = 39,989          base units  (version 3)  = 0.039989 tokens
+after:   available = 39,989,000,000  base units  (version 4)  = 39,989    tokens
+```
+The number was multiplied by exactly `BASE_UNITS_PER_TOKEN` (1e6) and the balance-row
+`version` incremented once (3 → 4), i.e. a single corrective mint/adjustment. We now hold
+**39,989 tokens** — about **2× the promised 20,000**, and roughly **10,000 actions** at the
+claim page's ~4-tokens/action ratio. The original bug (grant minted in base units, not tokens
+— see below) was real and is preserved for the record; this entry is now closed by the
+platform-side correction. **Metered execution is unblocked.** Our client-side conversion was
+correct throughout — no error on our side (`BASE_UNITS_PER_TOKEN = 1000000`, `formatTokens`
+both re-verified fresh from the installed package).
 
 ### What we were trying to do
 Confirm we have enough testnet token budget before the first metered operation
@@ -445,7 +465,21 @@ direct corollary of BUG-005's metering opacity.)
 
 **Severity:** Medium/High (determines whether the headline privacy feature can carry a bank account at all)
 **Area:** Placeholders / user-profile schema
-**Status:** Open — design adapted defensively; to confirm with the cheapest possible live probe (see Phase-1 plan) once balance lands
+**Status:** Open — still unconfirmed live; the question is now gated behind the egress allow-list (BUG-010), not tokens
+
+### Live finding 2026-06-22 — egress is checked BEFORE placeholder resolution, so the question is still open
+With a real balance, we registered the contract (`contract_id=445`) and ran the cheapest
+probe live (self-call, `pii_did` = our own DID, one templated field). The call reached the
+contract's `http-with-placeholders` path and returned:
+```
+bad_request: probe call: egress denied for host postman-echo.com   (host/http.egress_denied)
+```
+i.e. the typed `EgressDenied` variant — **not** `placeholder-unknown` / `placeholder-denied`.
+So the host enforces the **egress allow-list before it resolves `{{profile.*}}` markers**. We
+therefore *still* cannot observe whether `{{profile.bank_account}}` (or even
+`{{profile.first_name}}`) resolves — the call never gets that far. The blocker moved from
+"no tokens" to "no egress grant, and no programmatic way to set it" (BUG-010 / BUG-013).
+Bank-account resolution remains untested; the defensive org-data-ref fallback below stands.
 
 ### What we were trying to do
 Send the beneficiary's bank account number through the PII-safe path as
@@ -615,6 +649,12 @@ grant via `buildDelegationCredential` — so this also cleanly separates the two
    authorized script. The WIT comment ties resolution to the agent-auth grant unconditionally;
    only a live call settles whether "self" is auto-authorized.
 3. **Whether custom profile keys (`bank_account`) resolve** — see BUG-006; live-only.
+   **Live attempt 2026-06-22:** contract now registered (`contract_id=445`); the probe
+   self-call (`pii_did` = our own DID, `{{profile.first_name}}`) returned **`egress denied`**,
+   not a placeholder error — so the host checks egress *before* resolving markers and the
+   resolution question (for `first_name` and `bank_account` alike) is **still unanswered**,
+   now gated on the egress allow-list (BUG-010) rather than on a profile/grant. To settle it
+   we need the egress host authorized first; resolution of `{{profile.*}}` is downstream of that.
 4. **Whether any SDK call (vs. dashboard) sets agent-auth `authorized scripts` / `allowedHosts`.**
    No `updateAuthorisations`-style method is exported; `buildDelegationCredential` exists but
    its mapping to the dashboard "Authorized TEE contract" list is undocumented. Likely
@@ -698,7 +738,17 @@ one from the other.
 
 **Severity:** High (directly blocks getting a working contract to reach its API — and it's exactly the wall we hit provisioning AidLink, see BUG-007)
 **Area:** Egress authorization / docs vs. host WIT
-**Status:** Confirmed
+**Status:** Confirmed — and **live-confirmed unservable**: there is currently NO working path (SDK or dashboard) to add a host to a custom contract's egress allow-list (see BUG-013 confirmation).
+
+> **Live escalation 2026-06-22:** this stopped being just a documentation contradiction and
+> became a hard functional block. With AidLink registered (`contract_id=445`), every outbound
+> `http-with-placeholders` call returns `egress denied for host <h>`; no SDK method sets the
+> allow-list (re-searched), and the only documented setter — the dashboard "Authorized
+> contract" flow — does not list the registered contract at all (**BUG-013, confirmed live**).
+> Net: the `http-with-placeholders` payout / PII-resolution path cannot be exercised on
+> testnet right now, by us or by any developer. AidLink's privacy guarantee is therefore
+> demonstrated by the local structural proof (contract only ever emits the template; mock
+> endpoint rejects unresolved markers) rather than a live resolved-payout.
 
 ### The contradiction
 The same allow-list is described three ways:
@@ -814,7 +864,22 @@ authorization — or widen the field to admit full z-tenant script names.
 
 **Severity:** Medium/High (casts doubt on whether the documented "authorize your TEE contract via the dashboard" flow actually works for custom developer contracts — the only documented way to grant agent access / egress, per BUG-001/BUG-010)
 **Area:** Dashboard / agent-auth grant flow
-**Status:** Observed on `testnet.network.terminal3.io` → AI Agents → "Create a new AI Agent"
+**Status:** **CONFIRMED LIVE 2026-06-22** — with a contract genuinely registered, the dropdown still does not list it; egress for a custom contract cannot be self-served by any path (dashboard or SDK).
+
+### Confirmation 2026-06-22 — registered contract still does NOT appear in the dropdown
+After registering AidLink live (`contract_id=445`, minutes earlier), we opened the AI Agents
+→ "Create a new AI Agent" → **Authorized contract** dropdown **for the real Agent DID**
+(`did:t3n:5cc23ceebac85b5e…`). The dropdown **still shows only the generic placeholder
+catalog** (Verify identity, Apply for a personal loan, Book flight, …) — **no AidLink /
+`z:5cc2…:aidlink` / contract-445 entry**. So the control is definitively **not wired to the
+tenant's actually-registered contracts**, even when one exists. **Consequence:** there is
+currently **no way — dashboard or SDK — to authorize a custom registered contract**, and
+therefore no way to add its outbound host to the egress allow-list. This is the concrete,
+live-confirmed reason the egress wall (BUG-010) **cannot be self-served**. The two findings
+are the same blocker seen from two ends: BUG-010 = "egress denied, no setter found";
+BUG-013 = "the only documented setter (the dashboard authorize-contract flow) doesn't
+recognize the contract." Together they mean the live `http-with-placeholders` payout /
+placeholder-resolution path is **platform-blocked**, not blocked by our implementation.
 
 ### What we were trying to do
 Complete the agent-auth grant the docs point to (`delegate-access-to-agent.md`: "Select
@@ -863,3 +928,47 @@ Phase 1 live-run checklist.
 Make the "Authorized contract" control reflect the authenticated tenant's actually-registered
 contracts (or clearly label the catalog as examples), and document the SDK equivalent for
 setting a contract's egress allow-list so the flow doesn't depend solely on the dashboard.
+
+---
+
+## BUG-014 — `revokeDelegation` throws `ERR_INVALID_URL` under Node unless `baseUrl` is passed; the option is documented as optional but is effectively required off-browser
+
+**Severity:** Medium (the documented revoke path crashes in the exact Node/server context the SDK targets, with a cryptic URL error)
+**Area:** Delegation / `revokeDelegation`
+**Status:** Confirmed live, then worked around (revoke succeeded after the fix)
+
+### What we were trying to do
+Run the human-helper revocation live: `revokeDelegation({ credentialJcsB64u, client })`.
+
+### What happens
+With only the documented-minimal opts, the call throws:
+```
+TypeError: Failed to parse URL from /api/contracts/current?name=tee%3Adelegation%2Fcontracts
+  at fetchCurrentScriptVersion (.../t3n-sdk/dist/index.esm.js …)
+  at getScriptVersion (…)
+  at revokeDelegation (…)
+  cause: { code: 'ERR_INVALID_URL', input: '/api/contracts/current?name=tee%3Adelegation%2Fcontracts' }
+```
+Root cause: when `scriptVersion` is omitted, `revokeDelegation` resolves `"latest"` by
+`fetch()`-ing the **relative** path `/api/contracts/current?...`. Node's `fetch` (undici)
+requires an **absolute** URL — only a browser would resolve the relative path against an
+origin. So the default path crashes in exactly the Node/server runtime the SDK is meant for.
+
+### What the docs / types say
+`RevokeDelegationOpts.baseUrl` is documented as *"Override the node base URL used for
+`latest` resolution"* — i.e. **optional, an override**. In a Node process it is **required**;
+without it the resolution fetch has no base and throws. Nothing flags this.
+
+### Fix / workaround
+Pass `baseUrl` explicitly (or a concrete `scriptVersion`):
+```ts
+await revokeDelegation({ credentialJcsB64u, client, baseUrl: getNodeUrl() });
+```
+With `baseUrl: getNodeUrl()` the revoke **succeeded live** —
+`{ vcId: "73Gtw_acn94b7GK92egSSg", revokedFunctions: null }`.
+
+### Suggested fix
+Default `baseUrl` from the authenticated `client`'s resolved node URL (the client already
+knows it), or make the relative-URL resolution absolute; failing that, document `baseUrl`
+as required in non-browser environments. The same `getScriptVersion` path likely affects
+`DelegationCustodialClient` and any other `"latest"` resolver.

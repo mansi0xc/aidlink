@@ -41,9 +41,12 @@ async function main() {
   const gateways: ReliefGateways = {
     ledger,
     async checkEligibility(beneficiaryId) {
+      // `contract` is the target tenant-local TAIL (not the full z:<tid>:tail script name) —
+      // confirmed live: the SDK rejects a full script name with
+      // "contract must be a tenant-local contract tail".
       return disbursement.tenant.executeBusinessContract(disbursement.client as any, {
         tenant: verification.did,
-        contract: verifyScript,
+        contract: CONTRACT_TAIL,
         functionName: "check-eligibility",
         input: { beneficiary_id: beneficiaryId },
       });
@@ -60,9 +63,29 @@ async function main() {
     },
   };
 
-  const decision = await runRelief(BENEFICIARY, "250.00", "USD", gateways);
-  console.log("[phase2-x] decision:", JSON.stringify(decision, null, 2));
+  // Step 1 (the Tier-2 differentiator): the cross-tenant eligibility call, shown explicitly.
+  console.log("\n[phase2-x] (1) cross-tenant check-eligibility via executeBusinessContract …");
+  const eligibility = await gateways.checkEligibility(BENEFICIARY);
+  console.log("[phase2-x] ✅ cross-tenant eligibility result:", JSON.stringify(eligibility));
+  ledger.append({ kind: "eligibility-check", beneficiary_id: BENEFICIARY, detail: { approved: eligibility.approved, zone: eligibility.zone, via: "executeBusinessContract" } });
+
+  // Step 2: payout — expected to hit the same egress wall as the probe until the allow-list is set.
+  if (eligibility.approved) {
+    console.log("\n[phase2-x] (2) disburse-payout (expected to hit the egress wall) …");
+    try {
+      const payout = await gateways.disburse({ beneficiary_id: BENEFICIARY, amount: "250.00", currency: "USD" });
+      console.log("[phase2-x] ✅ payout:", JSON.stringify(payout));
+      ledger.append({ kind: "payout", beneficiary_id: BENEFICIARY, detail: { payout_id: payout.payout_id, account_masked: payout.account_masked, status: payout.status } });
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      const egress = /egress[_ ]denied/i.test(msg);
+      console.log(`[phase2-x] ⛔ payout ${egress ? "blocked by EGRESS wall (expected, BUG-010)" : "failed"}: ${msg.slice(0, 160)}`);
+      ledger.append({ kind: "payout", beneficiary_id: BENEFICIARY, detail: { status: egress ? "blocked_egress_denied" : "failed", note: msg.slice(0, 120) } });
+    }
+  }
+
   console.log("\n[phase2-x] audit ledger:\n" + ledger.render());
+  void runRelief; // (pure orchestration covered by tests/phase2-cross-tenant.mocked.test.ts)
 }
 
 main().catch((e) => {
