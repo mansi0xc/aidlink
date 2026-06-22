@@ -600,7 +600,7 @@ financial details (org-data ref vs profile).
 
 **Severity:** Medium/High (you cannot exercise the headline `{{profile.*}}` feature at all until this chain is solved, and none of it is written down)
 **Area:** User onboarding / profile / agent-auth grant / placeholder prerequisites
-**Status:** **[RESOLVED — ours, via live investigation]** the mapped chain is confirmed live (email was already verified by the claim flow; `submitUserInput` writes the profile directly; the self-call resolves `{{profile.first_name}}` → "Olivia"). The underlying **documentation gap remains [OPEN]** — there is still no published end-to-end "prepare a test user + authorize a contract" guide. One leg, `otpVerify`, is not yet run (needs the code from the mailbox).
+**Status:** **[RESOLVED — ours, via live investigation]** the mapped chain is confirmed live (email was already verified by the claim flow; `submitUserInput` writes the profile directly; the self-call resolves `{{profile.first_name}}` → "Olivia"). The OTP roundtrip was also tested to closure and found **non-exercisable on this testnet cluster** (see below — `otpRequest` mints no OTP state/email; `otpVerify` returns "no OTP state found"), which is moot here since `submitUserInput` works without it. The underlying **documentation gap remains [OPEN]** — there is still no published end-to-end "prepare a test user + authorize a contract" guide.
 
 ### What we were trying to do (zero-token)
 Determine the **minimal** path to the precondition every `{{profile.<field>}}` resolution
@@ -686,12 +686,18 @@ grant via `buildDelegationCredential` — so this also cleanly separates the two
    **succeeded** (`{ txHash: "tx:321:71424", userFound: true }`) — it did NOT hit the
    `EmailNotVerified` gate, so the claim flow both bound *and verified* the email. So the
    BUG-007 chain (`otpRequest → otpVerify → submitUserInput`) is real but **the OTP legs are
-   unnecessary here**: `submitUserInput` writes the profile directly. The `otpRequest` leg was
-   also exercised live and works — `{ contact: "olivygungin@gmail.com", channel: "email",
-   txHash: "tx:321:71429", isNewProfile: false }` (a code is emailed); `otpVerify` is the only
-   step not yet run (it needs the code read from the mailbox). Net correction to the mapped
-   chain: for a claim-verified DID, `submitUserInput` stands alone; OTP is only for binding a
-   *new* contact.
+   unnecessary here**: `submitUserInput` writes the profile directly. **The OTP roundtrip is
+   also non-exercisable on this cluster (skip-OTP test mode):** `otpRequest` returns
+   "success" — `{ contact: "olivygungin@gmail.com", channel: "email", txHash: "tx:321:71429",
+   isNewProfile: false }` — but with **no `expiresAtSec` and no `status`**, which the SDK doc
+   says marks a `skip_otp` test environment. Consistent with that, **no code email is ever
+   delivered** (the inbox holds only the "Welcome to Agent Developer Kit" mail), and
+   `otpVerify` with any code (`000000`/`123456`/`111111`) fails not with "wrong code" but with
+   **`host/otp.verify: OTP code provided but no OTP state found`** — i.e. `otpRequest` minted no
+   pending OTP state at all. So the documented `otpRequest → otpVerify` roundtrip **cannot be
+   completed here**; a developer relying on it to onboard a user would be stuck (the call looks
+   successful but is inert). Net correction to the mapped chain: for a claim-verified DID,
+   `submitUserInput` stands alone; the OTP roundtrip is both unnecessary *and* inert on testnet.
    **Related dashboard note (agent-auth / question #4 + BUG-010):** the **AI Agents** tab
    exists with a "New agent" button and an Agent-DID / Authorized-contract table, currently
    **empty**. This is the dashboard surface for the agent-auth grant (authorized scripts +
