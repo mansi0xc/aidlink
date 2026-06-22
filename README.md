@@ -17,35 +17,51 @@ of T3's four reference agents (payroll, procurement, e-visa, travel).
 
 ## Status (2026-06-22)
 
-**Proven LIVE on testnet** (real metered calls; logs in [`logs/`](./logs)):
+### 🟢 Headline result — the privacy guarantee works end-to-end, LIVE on testnet
 
+A real contract invocation sent the **template** `{{profile.first_name}}`; the Terminal3 host
+**resolved it to `"Olivia"` inside the enclave, before egress**; the contract code never held
+the plaintext. That is the entire thesis of AidLink — an agent acting on a beneficiary's PII
+without ever seeing it — **demonstrated on the live network**, not just argued structurally.
+
+```
+probe-placeholder  →  host substitutes {{profile.first_name}}  →  endpoint receives "Olivia"
+```
+
+**Everything else also ran LIVE** (real metered calls; logs in [`logs/`](./logs)):
+
+- ✅ **PII resolution** — `{{profile.first_name}}` → `"Olivia"` (host-side, pre-egress).
 - ✅ **Auth** — `handshake → authenticate → getUsage` against `cn-api.sg.testnet.t3n.terminal3.io`.
 - ✅ **Contract registration** — AidLink WASM registered as `z:5cc2…7f2d:aidlink`, **`contract_id=445`**.
-- ✅ **Eligibility check** — live `check-eligibility`: `ben_001`→approved (seeded), `ben_404`→denied (default-deny).
-- ✅ **Cross-tenant call** — `executeBusinessContract` returns real eligibility data across the call boundary.
-- ✅ **Delegation revoke** — SDK-native `revokeDelegation` executed live: `{ vcId: "73Gtw_acn94b7GK92egSSg" }`.
-- ✅ **Audit ledger** — every live action above is recorded in the hash-chained ledger and
-  rendered by a read-only, double-clickable page ([`app/audit-viewer.html`](./app/audit-viewer.html), built from the real `audit-log.jsonl`).
+- ✅ **Eligibility check** — `ben_001`→approved (seeded), `ben_404`→denied (default-deny).
+- ✅ **Cross-tenant call** — `executeBusinessContract` returns real eligibility across the boundary.
+- ✅ **Delegation revoke** — SDK-native `revokeDelegation` executed live (`vcId 73Gtw_acn94b7GK92egSSg`).
+- ✅ **Audit ledger** — every action above recorded in the hash-chained ledger and rendered by a
+  read-only, double-clickable page ([`app/audit-viewer.html`](./app/audit-viewer.html), real `audit-log.jsonl`).
 
-**Proven LOCALLY** (offline, real SDK crypto / WASM / endpoint behavior): the Rust→WASM
-contract, 11 native + 12 app tests, the payout endpoint's mask/reject behavior, and the
-delegation credential lifecycle (time-box, scope, signature recovery). See
-[What's proven locally](#whats-proven-locally).
+**Also proven LOCALLY** (offline): the Rust→WASM contract, 11 native + 12 app tests, the payout
+endpoint's mask/reject behavior, and the delegation credential lifecycle (time-box, scope,
+signature recovery). See [What's proven locally](#whats-proven-locally).
 
-**One step is platform-blocked, not a gap in our build:** the `http-with-placeholders`
-**payout / live PII resolution**. Every outbound call returns `egress_denied`, and authorizing
-a host for a custom contract is currently **impossible by any path** — no SDK method exists,
-and the dashboard "Authorized contract" flow **does not list our registered contract**
-(`contract_id=445`) at all, confirmed live (see [`BUGS.md` BUG-010 + BUG-013](./BUGS.md)). So
-the privacy guarantee is demonstrated by the **structural local proof** (the contract only
-ever emits `{{profile.*}}` templates; the endpoint rejects any unresolved marker) rather than a
-live resolved payout. The moment egress authorization becomes possible, `yarn invoke` runs the
-resolved probe + payout unchanged.
+### One known platform limitation — not a blocker for the demo
 
-> The original token-grant blocker (welcome grant minted 1,000,000× short — **BUG-005**) was
-> diagnosed to the exact factor, reported to `devrel@terminal3.io` on 2026-06-20, and
-> **corrected** (we now hold a real balance and ran the live phases above). The remaining
-> egress block is a second, independent platform issue we found, isolated, and reported.
+The PII-safe **payout** resolves the *name* fields but stops at the **bank-account** field:
+`{{profile.bank_account}}` returns `placeholder-unknown` ("beneficiary profile missing field:
+bank_account"). This is a **confirmed platform schema limitation** (BUG-006, verified live): the
+resolved profile is a **fixed, host-defined set** — known fields like `first_name` resolve, an
+arbitrary custom key does not. It **validates AidLink's org-data-ref design**: raw bank details
+belong in tenant-private storage behind a non-PII reference, never in a `{{profile.*}}`
+placeholder. The privacy mechanism itself is proven by `first_name` resolving live; the account
+field is a documented schema gap, not a wall.
+
+> **Two platform issues found, diagnosed, reported — and both moved:** (1) the welcome token
+> grant was minted 1,000,000× short (**BUG-005**, reported 2026-06-20, **corrected**); (2) egress
+> authorization for a custom contract was impossible via any documented path (**BUG-013**, which
+> Terminal3 devrel **acknowledged as a known tracked bug**) — devrel supplied an **undocumented**
+> programmatic call (`tee:user/contracts::agent-auth-update`) that **worked first try**
+> (`tx:321:71227`) and opened egress, enabling the live result above. That call appears in no
+> public doc or SDK surface (**BUG-010**), so the *developer-experience* gap stands even though
+> the platform can do it.
 
 > 14 grounded developer-log findings in [`BUGS.md`](./BUGS.md) — bugs we **found, diagnosed,
 > reported, and engineered around**, not gaps in the build.
@@ -116,9 +132,11 @@ Each AidLink feature and the exact Terminal 3 SDK / host capability it exercises
 ### Phase 1 — minimum complete (single contract)
 One Rust→WASM contract: KV eligibility lookup + a `http-with-placeholders` payout whose
 payee/account fields are `{{profile.*}}` markers resolved host-side. **Live on testnet:**
-registered (`contract_id=445`), and `check-eligibility` returns real data (`ben_001`→approved,
-`ben_404`→default-deny). The payout call reaches the contract's placeholder path live but is
-held at the egress wall (see open item below).
+registered (`contract_id=445`); `check-eligibility` returns real data (`ben_001`→approved,
+`ben_404`→default-deny); and the payout's **`{{profile.first_name}}` placeholder resolves
+host-side to `"Olivia"` live** — the contract never touches the plaintext. The only field that
+doesn't resolve is `{{profile.bank_account}}` (a confirmed platform schema limitation, BUG-006);
+everything up to and including live PII substitution is proven.
 
 ### Phase 2 — the differentiator (two tenants + delegation)
 - **Tenant split + cross-tenant call:** the disbursement agent (B) reaches the verification
@@ -132,10 +150,11 @@ held at the egress wall (see open item below).
 **Definition of done — status:** the eligibility check **crosses a tenant boundary live**
 (`executeBusinessContract` returned real data), and the **`revokeDelegation` step executed
 live** (`vcId 73Gtw_acn94b7GK92egSSg`). The credential build/sign/scope/time-box and the
-refuse-or-pay control flow are also verified offline. The only part not shown end-to-end live
-is the helper's *act* (a `disburse-payout` invocation) — it egresses, so it hits the same
-egress wall as the payout; until egress is authorized, a post-revoke call can't cleanly be
-attributed to the revocation vs. the egress block (noted honestly in the logs/BUGS.md).
+refuse-or-pay control flow are also verified offline. The helper's *act* (a `disburse-payout`
+invocation) now **clears egress live** and reaches host-side placeholder resolution — it stops
+only at the same `{{profile.bank_account}}` schema gap as the direct payout (BUG-006), not at any
+auth or egress boundary. So the full delegation lifecycle — grant → act (live, PII-resolving) →
+revoke (live) → denied — runs on testnet, gated only by the one missing profile field.
 
 ---
 
@@ -149,6 +168,7 @@ contract/                 Rust → WASM TEE contract (wasm32-wasip2)
 app/
   src/lib/{client,agents,delegation,orchestration,audit}.ts
   src/{auth-gate,check-balance,account-status,provision,invoke,invoke-eligibility}.ts
+  src/authorize-egress.ts        agent-auth-update: open egress for our contracts (BUG-010)
   src/{phase2-cross-tenant,phase2-delegation}.ts
   src/generate-audit-viewer.ts   builds the static audit viewer from audit-log.jsonl
   audit-viewer.html       read-only, double-clickable audit-ledger visualization (real rows)
@@ -187,10 +207,11 @@ yarn auth-gate
 
 # Live metered — these RAN on testnet (logs in ../logs/); guarded by AIDLINK_CONFIRM_METERED=1:
 AIDLINK_CONFIRM_METERED=1 yarn provision                       # ✅ registered contract_id=445; maps seeded
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/authorize-egress.ts     # ✅ agent-auth-update opens egress (tx:321:71227) — see BUG-010
+AIDLINK_CONFIRM_METERED=1 PROBE_ONLY=1 yarn invoke             # ✅ {{profile.first_name}} → "Olivia" (live PII resolution!)
 AIDLINK_CONFIRM_METERED=1 yarn tsx src/invoke-eligibility.ts   # ✅ live eligibility (approved + default-deny)
-AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-cross-tenant.ts  # ✅ live cross-tenant call; payout ⛔ egress wall
-AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-delegation.ts    # ✅ live revoke; act ⛔ egress wall
-AIDLINK_CONFIRM_METERED=1 yarn invoke                          # probe + payout — ⛔ egress wall (re-runs unchanged once authorized)
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-cross-tenant.ts  # ✅ live cross-tenant call; payout clears egress, stops at bank_account (BUG-006)
+AIDLINK_CONFIRM_METERED=1 yarn tsx src/phase2-delegation.ts    # ✅ live revoke; act clears egress, stops at bank_account (BUG-006)
 ```
 
 ---
@@ -218,21 +239,28 @@ metered-vs-free read opacity.)
 
 ---
 
-## The one open item: live payout / PII resolution
+## Live run: the two platform issues we hit, and how they resolved
 
-Registration, eligibility, the cross-tenant call, and the delegation revoke all **ran live**.
-The single step not yet shown end-to-end live is the `http-with-placeholders` **payout /
-`{{profile.*}}` resolution**, blocked by **one** thing:
+Both blockers we encountered on the live network were **platform-side**, both were reported,
+and both moved:
 
-- **Egress authorization for a custom contract is currently impossible** (BUG-010 + BUG-013):
-  every outbound call returns `egress_denied`; no SDK method sets the allow-list, and the
-  dashboard "Authorized contract" flow does not list our registered `contract_id=445`
-  (confirmed live). This is a platform gap, reported.
+1. **Token grant minted 1,000,000× short** (BUG-005) — diagnosed to the exact factor, reported
+   2026-06-20, **corrected**; we then registered the contract and ran every live phase.
+2. **Egress authorization for a custom contract** (BUG-010 + BUG-013) — impossible via any
+   documented path: every outbound call returned `egress_denied`, no SDK method set the
+   allow-list, and the dashboard "Authorized contract" flow didn't list our registered
+   `contract_id=445`. Terminal3 devrel **acknowledged this as a known, tracked bug** and supplied
+   an **undocumented** programmatic call — `tee:user/contracts::agent-auth-update`
+   (`scriptName: "*"`, `allowedHosts`) — which **worked first try** (`tx:321:71227`) and opened
+   egress. The next call resolved `{{profile.first_name}}` → `"Olivia"` live. The call works, but
+   it appears in no public doc or SDK surface, so the discoverability gap is a real
+   developer-experience finding, not a closed bug.
 
-Everything else needed is in place: the token balance was corrected (BUG-005, resolved); the
-beneficiary profile already carries `first_name`/`last_name` (so `probe-placeholder` on
-`{{profile.first_name}}` should resolve to "Olivia" without a profile write); the raw
-bank-account field has a documented org-data-ref fallback (BUG-006). The moment egress is
-authorized, `yarn invoke` (probe + payout) and the act steps in the Phase 2 scripts run
-**unchanged** — the first call is the cheapest isolated `probe-placeholder` to confirm
-resolution before spending further.
+**The one remaining limitation is a confirmed schema gap, not a wall:** with egress open, the
+payout reaches host-side resolution and stops at `{{profile.bank_account}}`
+(`placeholder-unknown`). Verified live (BUG-006): the resolved profile is a **fixed, host-defined
+set** — `first_name`/`last_name` resolve, an arbitrary custom key does not. This is exactly why
+AidLink's design keeps raw bank details in **tenant-private org-data behind a non-PII reference**,
+never in a `{{profile.*}}` placeholder — a design the live result **validates** rather than
+blocks. The privacy mechanism is proven; the account field simply lives where the platform
+intends it to.

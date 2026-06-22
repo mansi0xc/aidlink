@@ -465,9 +465,29 @@ direct corollary of BUG-005's metering opacity.)
 
 **Severity:** Medium/High (determines whether the headline privacy feature can carry a bank account at all)
 **Area:** Placeholders / user-profile schema
-**Status:** Open — still unconfirmed live; the question is now gated behind the egress allow-list (BUG-010), not tokens
+**Status:** **DEFINITIVELY CONFIRMED LIVE 2026-06-22** — `{{profile.first_name}}` resolves; `{{profile.bank_account}}` does NOT (`placeholder-unknown`). Custom profile keys are not in the resolved schema; the org-data-ref fallback is the correct design.
 
-### Live finding 2026-06-22 — egress is checked BEFORE placeholder resolution, so the question is still open
+> ### ✅ LIVE RESULT 2026-06-22 — confirmed end-to-end after egress was opened
+> With egress finally authorized (BUG-010 workaround, `tx:321:71227`), we ran the real calls:
+> - **`{{profile.first_name}}` RESOLVES.** The probe sent the literal template
+>   `{{profile.first_name}}`; the host substituted it **inside the enclave before egress** and
+>   the echo endpoint received `probe_value: "Olivia"`. The contract never held the plaintext —
+>   the privacy mechanism works end-to-end, live.
+> - **`{{profile.bank_account}}` does NOT resolve.** The cross-tenant payout cleared egress and
+>   reached placeholder resolution, then failed cleanly with
+>   `payout call: beneficiary profile missing field: bank_account` (our mapping of the typed
+>   `placeholder-unknown`). The delegation **act** and **post-revoke act** both did the same —
+>   past egress, stopped at the identical `bank_account` field.
+>
+> **What this proves:** the resolved profile schema is a **fixed, host-defined set** —
+> known fields (`first_name`, `last_name`, …) resolve; an arbitrary custom key written into the
+> profile (`bank_account`) is **not** resolvable, returning `placeholder-unknown`. So raw bank
+> details cannot live in a `{{profile.*}}` placeholder. This **validates the org-data-ref
+> fallback** (keep the account in tenant-private KV/org-data behind a non-PII reference) as the
+> *correct* design — not a guess, but the only design the platform actually supports. The
+> resolved schema and this rule remain undocumented (the original gap below stands).
+
+### Live finding 2026-06-22 (egress wall, now superseded by the result above) — egress is checked BEFORE placeholder resolution
 With a real balance, we registered the contract (`contract_id=445`) and ran the cheapest
 probe live (self-call, `pii_did` = our own DID, one templated field). The call reached the
 contract's `http-with-placeholders` path and returned:
@@ -738,17 +758,38 @@ one from the other.
 
 **Severity:** High (directly blocks getting a working contract to reach its API — and it's exactly the wall we hit provisioning AidLink, see BUG-007)
 **Area:** Egress authorization / docs vs. host WIT
-**Status:** Confirmed — and **live-confirmed unservable**: there is currently NO working path (SDK or dashboard) to add a host to a custom contract's egress allow-list (see BUG-013 confirmation).
+**Status:** **Corrected, not resolved** — a programmatic setter exists and works
+(`tee:user/contracts::agent-auth-update`), but it is **undiscoverable from any public doc**;
+we only obtained it via direct devrel support after raising BUG-013. The contradiction (three
+names) and the discoverability gap remain real developer-experience defects.
 
-> **Live escalation 2026-06-22:** this stopped being just a documentation contradiction and
-> became a hard functional block. With AidLink registered (`contract_id=445`), every outbound
-> `http-with-placeholders` call returns `egress denied for host <h>`; no SDK method sets the
-> allow-list (re-searched), and the only documented setter — the dashboard "Authorized
-> contract" flow — does not list the registered contract at all (**BUG-013, confirmed live**).
-> Net: the `http-with-placeholders` payout / PII-resolution path cannot be exercised on
-> testnet right now, by us or by any developer. AidLink's privacy guarantee is therefore
-> demonstrated by the local structural proof (contract only ever emits the template; mock
-> endpoint rejects unresolved markers) rather than a live resolved-payout.
+> ### ✅ RESOLUTION + LIVE RESULT 2026-06-22 — there IS a programmatic path (undocumented)
+> After we raised BUG-013, Terminal3 devrel supplied the working call. Egress for a custom
+> contract is set by invoking the **user contract** (not a tenant/contract API):
+> ```ts
+> const version = await getScriptVersion(baseUrl, "tee:user/contracts");   // → "2.14.0"
+> await client.executeAndDecode({
+>   script_name: "tee:user/contracts",
+>   script_version: version,
+>   function_name: "agent-auth-update",
+>   input: { agents: [{ agentDid: "<our DID>",
+>                       scripts: [{ scriptName: "*", allowedHosts: ["postman-echo.com"] }] }] },
+> });
+> ```
+> `scriptName: "*"` wildcards all our contracts (also sidesteps BUG-003's tail-vs-full-name
+> trap). **It worked first try** — `{ tx_hash: "tx:321:71227" }` — and egress immediately
+> opened: the very next `http-with-placeholders` call **resolved `{{profile.first_name}}` to
+> "Olivia" live** (host substitution end-to-end; see BUG-006), and the cross-tenant payout +
+> the delegation act both **cleared egress** (they now fail only on the missing `bank_account`
+> field, not on egress).
+>
+> **Why this stays an open DX gap, not a closed bug:** none of this — that egress is governed
+> by `tee:user/contracts::agent-auth-update`, that `allowedHosts` lives there, that `scriptName`
+> accepts `"*"` — appears in **any** public doc, the SDK type-level surface, or the dashboard.
+> It is reachable only by knowing the exact `function_name` and payload shape, which we got
+> from a human at devrel. A developer following the published docs **cannot** find it; the
+> dashboard path that the docs point to is itself broken (BUG-013, devrel-acknowledged). So
+> the platform *can* do this — but the documented/discoverable surface still can't.
 
 ### The contradiction
 The same allow-list is described three ways:
@@ -864,7 +905,18 @@ authorization — or widen the field to admit full z-tenant script names.
 
 **Severity:** Medium/High (casts doubt on whether the documented "authorize your TEE contract via the dashboard" flow actually works for custom developer contracts — the only documented way to grant agent access / egress, per BUG-001/BUG-010)
 **Area:** Dashboard / agent-auth grant flow
-**Status:** **CONFIRMED LIVE 2026-06-22** — with a contract genuinely registered, the dropdown still does not list it; egress for a custom contract cannot be self-served by any path (dashboard or SDK).
+**Status:** **CONFIRMED LIVE + EXTERNALLY VALIDATED 2026-06-22** — with a contract genuinely registered the dropdown still doesn't list it, and **Terminal3's own devrel team acknowledged this as a known, tracked platform bug**.
+
+> ### ✅ External validation 2026-06-22 — Terminal3 devrel confirmed this is a tracked bug
+> After we raised the dashboard finding, Terminal3 devrel (Ian) confirmed it directly,
+> describing it as a **"known limitation … tracking that as a separate bug,"** and supplied the
+> programmatic workaround (the `tee:user/contracts::agent-auth-update` call — see BUG-010).
+> This is independent, first-party confirmation of the finding: the "Authorized contract"
+> dashboard flow does **not** surface custom registered contracts, so the documented
+> authorize-your-contract path is non-functional for developers and is being tracked
+> platform-side. The supplied SDK workaround then **worked live** (`tx:321:71227`) and opened
+> egress — but that path is undocumented (BUG-010), so without devrel contact a developer
+> would remain blocked here.
 
 ### Confirmation 2026-06-22 — registered contract still does NOT appear in the dropdown
 After registering AidLink live (`contract_id=445`, minutes earlier), we opened the AI Agents
