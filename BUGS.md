@@ -16,7 +16,7 @@ Environment for all entries unless noted:
 
 **Severity:** High (documentation gap — sends builders down a wrong/blocked path for a core capability)
 **Area:** Delegation / access grants
-**Status:** Confirmed by reading shipped type definitions
+**Status:** **[OPEN — documentation gap]** Confirmed by reading shipped type definitions; the docs still describe delegation as dashboard-only / "coming soon."
 
 ### What we were trying to do
 Design AidLink's human-helper fallback: grant a volunteer **single-use, time-boxed**
@@ -135,7 +135,7 @@ SDK**: build + sign a time-boxed credential for the helper, invoke while live, t
 
 **Severity:** Medium (the full REST surface is unavailable as documented)
 **Area:** API reference
-**Status:** Confirmed
+**Status:** **[OPEN]** Confirmed — both documented spec URLs still 404.
 
 ### What we were trying to do
 Consult the full API surface (per the project brief and the docs' own pointers) to
@@ -171,7 +171,7 @@ Restore the OpenAPI document at a linked, stable URL, and reference it from `llm
 
 **Severity:** Medium (discoverability)
 **Area:** ADK walkthrough / SDK reference
-**Status:** Confirmed
+**Status:** **[OPEN — documentation gap]** Confirmed; powerful exports remain undocumented in narrative form (the `executeBusinessContract` tail detail was later confirmed live — see inline).
 
 ### What we were trying to do
 Map the project brief's intended calls to real SDK methods before coding.
@@ -220,7 +220,7 @@ cross-tenant-invocation page to the walkthrough.
 
 **Severity:** Low/Medium (blocks first build of the PII path until the real `wit/deps` are inspected)
 **Area:** TEE contract / WIT bindings
-**Status:** RESOLVED — pinned from the public reference contract `Terminal-3/z-tenant-flight`
+**Status:** **[RESOLVED — ours, via research]** pinned the exact import from the public reference contract `Terminal-3/z-tenant-flight`; the underlying documentation gap (the import is shown in no narrative doc) remains [OPEN].
 
 ### What we were trying to do
 Pin the exact WIT import for the placeholder-substituted outbound HTTP call (the core
@@ -301,7 +301,15 @@ import line + version.
 
 **Severity:** High (blocks Phase 1 — cannot register/execute a metered contract with 0.02 tokens)
 **Area:** Token grant / metering / claim page
-**Status:** **RESOLVED 2026-06-22** — a corrected grant landed (balance ×1e6 → 39,989 tokens). Root cause (welcome grant minted in base units instead of tokens) stands as the original bug; the platform-side fix unblocked us.
+**Status:** **[RESOLVED — Terminal3, platform-side fix after we reported it]** 2026-06-22.
+**Discovered by us** via `getUsage()` on **2026-06-19/20** (balance came back `available: 20000`
+= 0.02 tokens) and **diagnosed to the exact factor** — the welcome grant was minted in *base
+units* instead of *tokens*, i.e. `1,000,000×` (= `BASE_UNITS_PER_TOKEN`) short of the claim
+page's promised 20,000 tokens. **Reported to `devrel@terminal3.io` on 2026-06-20** with the DID
+and exact `getUsage()` payload. **Resolved 2026-06-22 by Terminal3's own platform-side
+correction** — a corrective mint (balance `×1e6` → 39,989 tokens, balance-row `version` 3→4);
+**not a workaround on our end** (our client-side conversion was correct throughout). The root
+cause (base-units-vs-tokens mint) is preserved below as the original bug.
 
 ### Resolution (2026-06-22)
 A fresh `getUsage()` re-verification (run before drafting the devrel reply) found the balance
@@ -420,6 +428,19 @@ we did NOT run it, because:
 top-up. (Worth asking devrel to confirm whether the original grant should have run
 through the `granted_credits` mint at `20000 × BASE_UNITS_PER_TOKEN`.)
 
+### ✅ Self-admit RUN LIVE 2026-06-22 — confirms it grants nothing; + the missing 10k-token floor
+With a real balance and (now-confirmed) verified email, we actually ran the self-admit:
+`submitUserInput({ profile, becomeDevTenant: true })` → `{ txHash: "tx:321:71424",
+tenantAdmit: { status: "already-admitted" } }`, **`grantedCredits: null`**, and **`getUsage`
+delta = +0**. So the separate `granted_credits` bucket this entry speculated about mints
+**nothing** for an already-admitted DID — the BUG-005 speculation is closed: self-admit was
+never a path to credit. (Reason-2 above — "gated behind a verified email we don't have" —
+was also corrected: the claim flow *had* verified the email; `submitUserInput` works directly.)
+Separately, BUG-015 found the **missing half of this bug's impact**: there is a hard
+**10,000-token minimum-credit floor** (`InsufficientCredit (required=10000000000)`) for any
+tenant op, so the original 0.04-token grant wasn't merely small — it was ~250,000× below the
+floor, which is why *nothing* metered could run until the corrected ~40k-token grant cleared it.
+
 ### Re-poll 2026-06-21 — balance changed, STILL in base units (bug persists)
 A re-poll of `getUsage()` shows the balance moved **20,000 → 40,000 base units** since this
 entry was filed on 2026-06-20 — i.e. a **+20,000 base-unit mint occurred** (a top-up of
@@ -465,7 +486,7 @@ direct corollary of BUG-005's metering opacity.)
 
 **Severity:** Medium/High (determines whether the headline privacy feature can carry a bank account at all)
 **Area:** Placeholders / user-profile schema
-**Status:** **DEFINITIVELY CONFIRMED LIVE 2026-06-22** — `{{profile.first_name}}` resolves; `{{profile.bank_account}}` does NOT (`placeholder-unknown`). Custom profile keys are not in the resolved schema; the org-data-ref fallback is the correct design.
+**Status:** **[OPEN — confirmed platform/schema limitation]** DEFINITIVELY CONFIRMED LIVE 2026-06-22 — `{{profile.first_name}}` resolves; `{{profile.bank_account}}` does NOT (`placeholder-unknown`). Custom profile keys are not in the resolved schema (a standing platform limitation; resolved schema still undocumented); validates the org-data-ref fallback as the correct design.
 
 > ### ✅ LIVE RESULT 2026-06-22 — confirmed end-to-end after egress was opened
 > With egress finally authorized (BUG-010 workaround, `tx:321:71227`), we ran the real calls:
@@ -499,7 +520,9 @@ So the host enforces the **egress allow-list before it resolves `{{profile.*}}` 
 therefore *still* cannot observe whether `{{profile.bank_account}}` (or even
 `{{profile.first_name}}`) resolves — the call never gets that far. The blocker moved from
 "no tokens" to "no egress grant, and no programmatic way to set it" (BUG-010 / BUG-013).
-Bank-account resolution remains untested; the defensive org-data-ref fallback below stands.
+(At the time of this note bank-account resolution was still untested; it was later resolved
+once egress opened — see the LIVE RESULT block at the top of this entry: `first_name` resolves,
+`bank_account` returns `placeholder-unknown`. The defensive org-data-ref fallback stands.)
 
 ### What we were trying to do
 Send the beneficiary's bank account number through the PII-safe path as
@@ -577,7 +600,7 @@ financial details (org-data ref vs profile).
 
 **Severity:** Medium/High (you cannot exercise the headline `{{profile.*}}` feature at all until this chain is solved, and none of it is written down)
 **Area:** User onboarding / profile / agent-auth grant / placeholder prerequisites
-**Status:** Mapped from `index.d.ts`; the parts that need a verified email / live sandbox are called out explicitly below
+**Status:** **[RESOLVED — ours, via live investigation]** the mapped chain is confirmed live (email was already verified by the claim flow; `submitUserInput` writes the profile directly; the self-call resolves `{{profile.first_name}}` → "Olivia"). The underlying **documentation gap remains [OPEN]** — there is still no published end-to-end "prepare a test user + authorize a contract" guide. One leg, `otpVerify`, is not yet run (needs the code from the mailbox).
 
 ### What we were trying to do (zero-token)
 Determine the **minimal** path to the precondition every `{{profile.<field>}}` resolution
@@ -654,16 +677,28 @@ grant via `buildDelegationCredential` — so this also cleanly separates the two
    `first_name`) is viable as-is, and Phase 1's self-call path no longer needs a profile
    write for those fields. **Caveat (note the distinction):** the dashboard shows an email is
    *present*, not that it is *verified*. The `EmailNotVerified` gate on `submitUserInput` keys
-   off verification, not mere presence — so if we later need to WRITE additional profile
-   fields (e.g. the bank-account fallback in BUG-006), whether an OTP roundtrip is still
-   required remains unconfirmed. For just *reading* `{{profile.first_name/last_name}}`, the
-   profile is already sufficient.
+   off verification, not mere presence — so whether writing additional profile fields needs an
+   OTP roundtrip was an open question at the time. **It was resolved live (see the next
+   block): the email IS verified, so `submitUserInput` writes fields directly, no OTP needed.**
+   For just *reading* `{{profile.first_name/last_name}}`, the profile is already sufficient.
+   **CONFIRMED LIVE 2026-06-22 — email IS verified; no OTP roundtrip needed for this DID.**
+   `client.submitUserInput({ profile:{ first_name, last_name }, becomeDevTenant:true })`
+   **succeeded** (`{ txHash: "tx:321:71424", userFound: true }`) — it did NOT hit the
+   `EmailNotVerified` gate, so the claim flow both bound *and verified* the email. So the
+   BUG-007 chain (`otpRequest → otpVerify → submitUserInput`) is real but **the OTP legs are
+   unnecessary here**: `submitUserInput` writes the profile directly. The `otpRequest` leg was
+   also exercised live and works — `{ contact: "olivygungin@gmail.com", channel: "email",
+   txHash: "tx:321:71429", isNewProfile: false }` (a code is emailed); `otpVerify` is the only
+   step not yet run (it needs the code read from the mailbox). Net correction to the mapped
+   chain: for a claim-verified DID, `submitUserInput` stands alone; OTP is only for binding a
+   *new* contact.
    **Related dashboard note (agent-auth / question #4 + BUG-010):** the **AI Agents** tab
    exists with a "New agent" button and an Agent-DID / Authorized-contract table, currently
    **empty**. This is the dashboard surface for the agent-auth grant (authorized scripts +
-   allowed hosts). It likely can't be populated until a contract is registered — i.e. still
-   downstream of BUG-005. The actual form fields (and whether they set the egress allow-list
-   per BUG-010) are pending a look once registration is possible.
+   allowed hosts). **Followed up after registration:** with the contract registered
+   (`contract_id=445`) the dropdown **still does not list it** (confirmed live, BUG-013, which
+   Terminal3 devrel acknowledged as a tracked bug); egress was ultimately opened via the
+   *undocumented* `tee:user/contracts::agent-auth-update` call instead (BUG-010).
 2. **Whether a self-call (`pii_did` = own DID) resolves `{{profile.*}}` with no explicit
    agent-auth grant**, or whether even self-calls require the contract to be listed as an
    authorized script. The WIT comment ties resolution to the agent-auth grant unconditionally;
@@ -707,7 +742,7 @@ grant steps have an SDK method vs. are dashboard-only.
 
 **Severity:** Medium (steers developers to brittle substring matching when typed branching exists)
 **Area:** Error handling / docs
-**Status:** Confirmed (`index.d.ts` + a live error observed)
+**Status:** **[OPEN — documentation gap]** Confirmed (`index.d.ts` + a live error observed)
 
 ### What the docs say
 `common-errors.md` (verbatim):
@@ -734,7 +769,7 @@ provides, and reserve substring matching for the few contract-authored messages.
 
 **Severity:** Medium (a copy-pasted branch silently never matches)
 **Area:** Error handling / docs
-**Status:** Confirmed
+**Status:** **[OPEN — documentation gap]** Confirmed
 
 ### The mismatch
 `common-errors.md` documents the user/session error codes as snake_case `detail` prefixes:
@@ -758,8 +793,10 @@ one from the other.
 
 **Severity:** High (directly blocks getting a working contract to reach its API — and it's exactly the wall we hit provisioning AidLink, see BUG-007)
 **Area:** Egress authorization / docs vs. host WIT
-**Status:** **Corrected, not resolved** — a programmatic setter exists and works
-(`tee:user/contracts::agent-auth-update`), but it is **undiscoverable from any public doc**;
+**Status:** **[Workaround supplied by Terminal3 devrel — underlying discoverability/doc gap OPEN]**
+a programmatic setter exists and works
+(`tee:user/contracts::agent-auth-update`, verified live `tx:321:71227`), but it is
+**undiscoverable from any public doc or SDK surface**;
 we only obtained it via direct devrel support after raising BUG-013. The contradiction (three
 names) and the discoverability gap remain real developer-experience defects.
 
@@ -822,7 +859,7 @@ Reconcile `http_allow_list` vs `authorised_hosts` vs `agent_auth` grant terminol
 
 **Severity:** High (the canonical example actively mis-teaches the platform's headline privacy feature)
 **Area:** Reference repo / docs
-**Status:** Confirmed (README vs. `world.wit` / `Cargo.toml` / `booking.rs` in the same repo, `main`)
+**Status:** **[OPEN]** Confirmed (README vs. `world.wit` / `Cargo.toml` / `booking.rs` in the same repo, `main`) — the reference repo is still internally inconsistent.
 
 ### The mismatches (all within one repo, on `main`)
 1. **Privacy model — directly inverted.** The README states:
@@ -856,7 +893,7 @@ description, add `http_with_placeholders` to the manifest, and bump the version.
 
 **Severity:** Medium (blocks the obvious wiring of delegation to a z-tenant contract; undocumented length cap + undocumented "what value goes here")
 **Area:** Delegation / `buildDelegationCredential`
-**Status:** Confirmed empirically (Phase 2 build)
+**Status:** **[OPEN — limitation + undocumented]** Confirmed empirically (Phase 2 build); worked around with a short logical contract id.
 
 ### What we were trying to do
 Build a human-helper delegation credential authorizing the helper to call AidLink's
@@ -886,8 +923,11 @@ The credential is clearly modeled around the built-in system contracts (`tee:pay
 `tee:user`, …), whose ids are short. A third-party z-tenant — the entire point of the ADK
 — cannot put its real contract identity in the field. You're forced to invent a short
 logical id (we use `z:aidlink`) and *hope* the host's grant-matching maps it to the real
-`z:<tid>:aidlink` script — but the mapping rule is undocumented and untestable without the
-sandbox. This is a structural gap between the delegation design and the z-tenant model.
+`z:<tid>:aidlink` script — but the mapping rule is undocumented and remains unverified in
+practice (we built/signed/revoked credentials live with the short id, but a credential-bound
+invocation that would exercise the id→script mapping wasn't completed — it was blocked
+downstream on egress/`bank_account`). This is a structural gap between the delegation design
+and the z-tenant model.
 
 ### Workaround in AidLink
 Use a short logical id (`z:aidlink`, overridable via `AIDLINK_CONTRACT_ID`) in the
@@ -905,7 +945,7 @@ authorization — or widen the field to admit full z-tenant script names.
 
 **Severity:** Medium/High (casts doubt on whether the documented "authorize your TEE contract via the dashboard" flow actually works for custom developer contracts — the only documented way to grant agent access / egress, per BUG-001/BUG-010)
 **Area:** Dashboard / agent-auth grant flow
-**Status:** **CONFIRMED LIVE + EXTERNALLY VALIDATED 2026-06-22** — with a contract genuinely registered the dropdown still doesn't list it, and **Terminal3's own devrel team acknowledged this as a known, tracked platform bug**.
+**Status:** **[CONFIRMED by Terminal3 — externally validated, not yet fixed]** confirmed live 2026-06-22 (with a contract genuinely registered the dropdown still doesn't list it), and **Terminal3's own devrel team acknowledged this as a known, tracked platform bug**.
 
 > ### ✅ External validation 2026-06-22 — Terminal3 devrel confirmed this is a tracked bug
 > After we raised the dashboard finding, Terminal3 devrel (Ian) confirmed it directly,
@@ -965,8 +1005,9 @@ and to set its egress allow-list (BUG-001 showed the docs frame delegation as da
 BUG-010 showed egress is described as a per-user dashboard grant). If that dropdown isn't
 wired to real developer contracts, then the documented end-to-end "authorize your contract"
 path may not actually be functional for third-party z-tenant contracts at all — leaving the
-SDK-native delegation primitives (BUG-001) as the only working route. We cannot fully confirm
-this until a contract is registered (post-BUG-005), but the evidence is strong.
+SDK-native delegation primitives (BUG-001) as the only working route. We **did** register a
+contract (`contract_id=445`) and confirmed this directly — the dropdown still did not list it,
+and Terminal3 devrel acknowledged the bug (see Status).
 
 ### Impact on AidLink — not blocking
 Phase 2's human-helper authorization already uses the **SDK-native** delegation path
@@ -987,7 +1028,7 @@ setting a contract's egress allow-list so the flow doesn't depend solely on the 
 
 **Severity:** Medium (the documented revoke path crashes in the exact Node/server context the SDK targets, with a cryptic URL error)
 **Area:** Delegation / `revokeDelegation`
-**Status:** Confirmed live, then worked around (revoke succeeded after the fix)
+**Status:** **[RESOLVED — ours, workaround]** confirmed live, then worked around by passing `baseUrl` explicitly (revoke then succeeded live); the underlying SDK defect remains [OPEN] for anyone not passing it.
 
 ### What we were trying to do
 Run the human-helper revocation live: `revokeDelegation({ credentialJcsB64u, client })`.
@@ -1024,3 +1065,125 @@ Default `baseUrl` from the authenticated `client`'s resolved node URL (the clien
 knows it), or make the relative-URL resolution absolute; failing that, document `baseUrl`
 as required in non-browser environments. The same `getScriptVersion` path likely affects
 `DelegationCustodialClient` and any other `"latest"` resolver.
+
+---
+
+> Entries below (BUG-015 … BUG-017) come from a no-deadline **live exploration pass** —
+> exercising surfaces previously only mapped from the `.d.ts`, against the real testnet.
+
+## BUG-015 — A 10,000-token minimum-credit floor gates ALL tenant ops; a fresh DID gets 0 welcome grant; no SDK path to fund a second tenant
+
+**Severity:** Medium/High (a genuine second tenant can't be self-provisioned; also the missing piece that explains BUG-005)
+**Area:** Tokens / metering / tenant onboarding
+**Status:** **[OPEN]** Confirmed live — platform limitation (10k-token floor; fresh DID gets 0; no funding path), all undocumented.
+
+### What we were trying to do
+Provision a genuine SECOND tenant/DID (verification vs disbursement as two distinct, real
+identities) so Phase 2's cross-tenant call runs across a true boundary, not the single-DID
+fallback.
+
+### What actually happens
+A fresh ETH key authenticates fine to a new DID (`did:t3n:6dde…3959`), but:
+```
+getUsage → available: 0 base units            # a fresh DID gets NO welcome grant on auth
+tenant.me() → 403 forbidden:
+  InsufficientCredit (account=6dde…, required=10000000000, available=0)
+contracts.register → same 403 InsufficientCredit (required=10000000000)
+```
+So there is a hard **minimum-credit floor of 10,000,000,000 base units = 10,000 tokens** to
+perform *any* tenant operation — including the read-only `me()` and contract registration.
+A brand-new DID has 0 balance (the welcome grant comes from the **dashboard claim flow**, not
+from authenticating), and the SDK exposes **no token-transfer method** (`transfer` exists only
+as a `TokenTxKind` in the ledger, not as a client call), so there is no way to fund the new DID
+from our funded one.
+
+### Two consequences
+1. **A real A≠B two-tenant setup is not self-serviceable.** It requires a *second account
+   claimed via the dashboard* (to trigger a welcome grant ≥ the floor). With one funded DID, the
+   documented single-DID fallback (A=B, loud warning) is the only option — which is what
+   AidLink's `agents.ts` already does. The cross-tenant **call shape/path** is exercised live;
+   a true distinct-identity boundary needs a second claimed tenant.
+2. **This is the missing half of BUG-005.** The original buggy grant was 0.04 tokens — not just
+   "small," but *three orders of magnitude below the 10,000-token floor*, so literally nothing
+   metered could run. The corrected ~40,000-token grant clears the floor, which is exactly when
+   our live phases started working.
+
+### What the docs say
+Nothing — the 10,000-token floor, the "fresh DID gets 0" behavior, and the absence of a funding
+path are all undocumented. `InsufficientCredit` with a fixed `required=10000000000` is the only
+signal, and only at call time.
+
+### Suggested fix
+Document the minimum-credit floor and the per-op credit model; provide a testnet faucet or an
+SDK transfer so developers can stand up multiple tenants for legitimate multi-agent testing.
+
+## BUG-016 — Advertised multi-protocol agent identity (A2A card / ERC-8004 / Entra / MCP / Web Bot Auth) is not present in the SDK, not resolvable, and not documented
+
+**Severity:** Medium (a headline "multi-protocol" capability has no discoverable surface)
+**Area:** Agent identity / interop
+**Status:** **[OPEN]** Confirmed (SDK + live endpoints + docs all checked) — the advertised multi-protocol surface is absent/undocumented.
+
+### What we were trying to do
+Resolve our registered agent/contract to an **A2A agent card** (and check ERC-8004 / Entra
+Agent ID / MCP / Web Bot Auth), per the stated multi-protocol identity feature.
+
+### What we found — three independent dead ends
+1. **SDK:** `@terminal3/t3n-sdk@3.9.0` exports **no** A2A / agent-card / ERC-8004 / Entra / MCP
+   methods or types (`grep` over `index.d.ts` finds none). The only agent-identity primitive is
+   the host-side WIT `agent-registry::register-agent(agent-uri, owner-eth-address)` — write-only
+   on-chain registration, with no client-side resolver.
+2. **Live endpoints:** every plausible resolver 404s —
+   `{node}/.well-known/agent.json`, `/.well-known/agent-card.json`, `/api/agents/<did>`,
+   `/agents/<did>`, and the same under `api.terminal3.io`. No agent card resolves for our DID or
+   `contract_id=445`.
+3. **Docs:** `llms.txt` lists **no** page mentioning A2A, ERC-8004, Entra, MCP, Web Bot Auth, or
+   agent cards; the DID pages (`how-t3n-works/did.md`) describe DIDs only and explicitly contain
+   none of these.
+
+### Why it matters
+"Resolve a `did:t3n` to an A2A card / ERC-8004 / Entra Agent ID" is promoted as a platform
+capability, but a developer cannot find or call it anywhere — not in the SDK, not over HTTP, not
+in the docs. Either it isn't shipped in this SDK version/cluster, or it's entirely undocumented.
+
+### Suggested fix
+If the multi-protocol resolution exists, publish the resolver endpoint(s) and an SDK method +
+example; if it's roadmap, mark it as such rather than as a current feature.
+
+## BUG-017 — `OrgDataClient` grants (setGrants/grantsGet/deleteGrants) are gated behind an undocumented "organisation" entity + policy init, distinct from a tenant/user DID
+
+**Severity:** Medium (a whole authz layer — the org-contract `UserGrant` model from BUG-001 — is unreachable without undocumented org onboarding)
+**Area:** Org-data grants / policy
+**Status:** **[OPEN]** Confirmed live — undocumented organisation + policy onboarding prerequisite gates the whole grants API.
+
+### What we were trying to do
+Exercise the org-contract grant lifecycle mapped from the type defs in BUG-001:
+`createOrgDataClientFromSession` → `setGrants`/`grantsGet`/`deleteGrants` for our contract.
+
+### What actually happens (in order)
+```
+setGrants  → OrgPolicyNotInitialised: org policy is not initialised for this organisation
+createPolicy({ orgDid: <our DID>, initialAdminDid: <our DID> })
+           → OrganisationNotFound: organisation does not exist
+policyGet  → OrgPolicyNotInitialised
+```
+So the chain is: an **organisation** must exist first → then `createPolicy` initialises its
+policy → only then do `setGrants`/`grantsGet`/`deleteGrants` work. Our **user/tenant DID is not
+an organisation** (`OrganisationNotFound`), and nothing in the SDK surface creates one
+(`SubmitUserInputArgs` has an `organisationDid` field, hinting orgs are a separate entity, but no
+"create organisation" call is exposed/documented). The org-data grant tier is therefore a
+**separate, undocumented onboarding path** from the tenant/contract flow we used for everything
+else.
+
+### Bonus (audit-events, same run)
+- `getAuditEvents()` (self) **works** but returns `batches: 0` — the host `audit.get-mine` feed
+  is empty for us; host-level audit events require explicit contract emission (distinct from
+  AidLink's own app-side hash-chained ledger, which captured every action).
+- `getAuditEvents({ pii_did: <other DID> })` (delegated read) is **correctly refused** live:
+  `403 audit.get-mine: <our DID> holds no live agent-auth grant from <other DID>`. This is a
+  clean **live confirmation** of the agent-auth delegated-read model (BUG-001) — you can read
+  another user's trail only while their grant to you is live.
+
+### Suggested fix
+Document organisation creation as a prerequisite for the org-data/grants API (and expose/point
+to the call that creates one), or clarify that `OrgDataClient` targets enterprise orgs, not
+individual tenant DIDs.
