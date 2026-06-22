@@ -24,6 +24,8 @@ of T3's four reference agents (payroll, procurement, e-visa, travel).
 - ✅ **Eligibility check** — live `check-eligibility`: `ben_001`→approved (seeded), `ben_404`→denied (default-deny).
 - ✅ **Cross-tenant call** — `executeBusinessContract` returns real eligibility data across the call boundary.
 - ✅ **Delegation revoke** — SDK-native `revokeDelegation` executed live: `{ vcId: "73Gtw_acn94b7GK92egSSg" }`.
+- ✅ **Audit ledger** — every live action above is recorded in the hash-chained ledger and
+  rendered by a read-only, double-clickable page ([`app/audit-viewer.html`](./app/audit-viewer.html), built from the real `audit-log.jsonl`).
 
 **Proven LOCALLY** (offline, real SDK crypto / WASM / endpoint behavior): the Rust→WASM
 contract, 11 native + 12 app tests, the payout endpoint's mask/reject behavior, and the
@@ -148,6 +150,8 @@ app/
   src/lib/{client,agents,delegation,orchestration,audit}.ts
   src/{auth-gate,check-balance,account-status,provision,invoke,invoke-eligibility}.ts
   src/{phase2-cross-tenant,phase2-delegation}.ts
+  src/generate-audit-viewer.ts   builds the static audit viewer from audit-log.jsonl
+  audit-viewer.html       read-only, double-clickable audit-ledger visualization (real rows)
   mock-payout/server.ts   PII-boundary-enforcing payout + /echo probe endpoint
   tests/                  *.local (offline) · *.mocked (SDK boundary) · *.integration (live)
 logs/                     captured output of the live testnet runs
@@ -175,6 +179,8 @@ cd ../contract && cargo test && cargo build --target wasm32-wasip2 --release
 cd ../app && yarn typecheck
 yarn tsx --test tests/phase2-delegation.local.test.ts tests/phase2-cross-tenant.mocked.test.ts tests/audit.local.test.ts
 yarn mock-payout           # in another shell
+yarn audit-viewer          # rebuild app/audit-viewer.html from the real audit-log.jsonl —
+                           #   read-only, double-click to open (no server / fetch / CORS)
 
 # Live sandbox (proven): real DID + balance
 yarn auth-gate

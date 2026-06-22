@@ -14,6 +14,7 @@
     "phase2:cross-tenant": "tsx src/phase2-cross-tenant.ts",
     "phase2:delegation": "tsx src/phase2-delegation.ts",
     "account-status": "tsx src/account-status.ts",
+    "audit-viewer": "tsx src/generate-audit-viewer.ts --dedupe",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json --noEmit"
   },

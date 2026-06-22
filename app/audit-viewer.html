@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AidLink — Audit Ledger</title>
+<style>
+  :root{
+    --teal-dark:#0B4F47;
+    --teal:#136F63;
+    --coral:#F4623A;
+    --ink:#1B2B2A;
+    --muted:#6B7C7A;
+    --bg:#F6F8F7;
+    --card:#FFFFFF;
+    --line:#E4EAE8;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+  }
+  header{
+    background:linear-gradient(135deg,var(--teal) 0%,var(--teal-dark) 100%);
+    color:#fff;
+    padding:28px 36px 24px;
+  }
+  .header-row{display:flex;align-items:center;gap:14px;}
+  .logo{width:40px;height:40px;border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .logo svg{width:26px;height:26px;}
+  h1{font-size:22px;margin:0;font-weight:700;letter-spacing:-0.01em;}
+  .sub{font-size:13px;color:#CFEAE4;margin-top:4px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
+  .meta-row{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;}
+  .pill{
+    font-size:12px;font-weight:600;padding:6px 12px;border-radius:999px;
+    background:rgba(255,255,255,0.14);color:#fff;display:flex;align-items:center;gap:6px;
+  }
+  .pill.verified{background:rgba(255,255,255,0.95);color:var(--teal-dark);}
+  main{max-width:760px;margin:0 auto;padding:28px 20px 60px;}
+  .row{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:16px 18px;
+    margin-bottom:12px;
+    display:grid;
+    grid-template-columns:34px 1fr auto;
+    gap:14px;
+    align-items:start;
+  }
+  .dot{
+    width:34px;height:34px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    font-size:16px;flex-shrink:0;margin-top:2px;
+  }
+  .kind-eligibility .dot{background:#E3F2EF;color:var(--teal-dark);}
+  .kind-payout-ok .dot{background:#E3EEFA;color:#1E5FA8;}
+  .kind-payout-blocked .dot{background:#FDEFE7;color:#B5501E;}
+  .kind-grant .dot{background:#FDEAE3;color:var(--coral);}
+  .kind-revoke .dot{background:#EFEFF2;color:#4B4B57;}
+  .kind-denied .dot{background:#FBE7E7;color:#B0392F;}
+  .title-line{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+  .kind-label{font-weight:700;font-size:14px;}
+  .ben-id{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;color:var(--muted);}
+  .detail{margin-top:6px;font-size:13px;color:#374746;line-height:1.55;}
+  .detail b{color:var(--ink);}
+  .hash-chip{
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    font-size:11px;color:var(--muted);background:var(--bg);
+    padding:3px 8px;border-radius:6px;margin-top:8px;display:inline-block;
+  }
+  .right-col{text-align:right;white-space:nowrap;}
+  .ts{font-size:11.5px;color:var(--muted);font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
+  footer{text-align:center;padding:30px 0 50px;color:var(--muted);font-size:12px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-row">
+    <div class="logo">
+      <svg viewBox="0 0 480 480"><path d="M240,72 C292,72 344,88 386,114 L386,232 C386,334 314,396 240,428 C166,396 94,334 94,232 L94,114 C136,88 188,72 240,72 Z" fill="#136F63"/><g fill="none" stroke="#F4623A" stroke-width="40" stroke-linejoin="round"><rect x="-85" y="-38" width="170" height="76" rx="38" transform="translate(202,212) rotate(-40)"/><rect x="-85" y="-38" width="170" height="76" rx="38" transform="translate(278,258) rotate(-40)"/></g></svg>
+    </div>
+    <div>
+      <h1>AidLink — Audit Ledger</h1>
+      <div class="sub">z:5cc2…7f2d:aidlink · contract_id=445</div>
+    </div>
+  </div>
+  <div class="meta-row">
+    <span class="pill verified" id="verify-pill">✓ Chain verified</span>
+    <span class="pill" id="row-count-pill">0 actions recorded</span>
+  </div>
+</header>
+
+<main id="rows"></main>
+
+<footer>AidLink — Terminal 3 Agent Dev Kit Bounty · hash-chained, tamper-evident, account numbers always masked</footer>
+
+<script>
+// Sample data matching the real live run -- Claude Code: replace ROWS with the
+// actual parsed contents of audit-log.jsonl (map whatever field names audit.ts
+// really emits into this shape: kind, beneficiary_id, detail, hash, ts).
+const ROWS = [
+  {
+    "kind": "eligibility-check",
+    "beneficiary_id": "ben_001",
+    "detail": {
+      "approved": true,
+      "zone": "Z3"
+    },
+    "hash": "ae0d7e88647b",
+    "ts": 1782120009052
+  },
+  {
+    "kind": "eligibility-check",
+    "beneficiary_id": "ben_001",
+    "detail": {
+      "approved": true,
+      "zone": "Z3",
+      "via": "executeBusinessContract"
+    },
+    "hash": "f34034c712cf",
+    "ts": 1782120048356
+  },
+  {
+    "kind": "payout",
+    "beneficiary_id": "ben_001",
+    "detail": {
+      "status": "blocked_egress_denied",
+      "note": "HTTP 400: Invalid params ({\"code\":\"bad_request\",\"detail\":\"payout call: egress denied for host postman-echo.com\",\"request"
+    },
+    "hash": "8269008339b5",
+    "ts": 1782120048553
+  },
+  {
+    "kind": "delegation-grant",
+    "beneficiary_id": "ben_001",
+    "detail": {
+      "functions": [
+        "disburse-payout"
+      ],
+      "window_secs": 300,
+      "vc_id_b64u": "eyJhZ2VudF9w…"
+    },
+    "hash": "86d3eaa42d36",
+    "ts": 1782120131341
+  },
+  {
+    "kind": "delegation-revoke",
+    "beneficiary_id": "ben_001",
+    "detail": {
+      "vc_id": "73Gtw_acn94b7GK92egSSg",
+      "revoked_functions": null
+    },
+    "hash": "19affdb19766",
+    "ts": 1782120213614
+  },
+  {
+    "kind": "delegation-denied",
+    "beneficiary_id": "ben_001",
+    "detail": {
+      "blocked_by": "egress_wall_before_delegation_check",
+      "error": "HTTP 400: Invalid params ({\"code\":\"bad_request\",\"detail\":\"payout call: egress denied for host postma"
+    },
+    "hash": "0549b43daa8c",
+    "ts": 1782120213716
+  }
+];
+
+const ICONS = {
+  "eligibility-check": "✓",
+  "payout": "⛔",
+  "delegation-grant": "🔑",
+  "delegation-revoke": "🔒",
+  "delegation-denied": "🚫",
+};
+const CLASS = {
+  "eligibility-check": "kind-eligibility",
+  "payout": "kind-payout-blocked",
+  "delegation-grant": "kind-grant",
+  "delegation-revoke": "kind-revoke",
+  "delegation-denied": "kind-denied",
+};
+const LABEL = {
+  "eligibility-check": "Eligibility check",
+  "payout": "Payout attempt",
+  "delegation-grant": "Delegation granted",
+  "delegation-revoke": "Delegation revoked",
+  "delegation-denied": "Post-revoke denied",
+};
+
+function renderDetail(d){
+  return Object.entries(d).map(([k,v]) =>
+    `<b>${k}</b>: ${Array.isArray(v) ? v.join(", ") : String(v)}`
+  ).join(" · ");
+}
+
+const root = document.getElementById("rows");
+ROWS.forEach(r => {
+  const el = document.createElement("div");
+  el.className = "row " + (CLASS[r.kind] || "");
+  el.innerHTML = `
+    <div class="dot">${ICONS[r.kind] || "•"}</div>
+    <div>
+      <div class="title-line">
+        <span class="kind-label">${LABEL[r.kind] || r.kind}</span>
+        <span class="ben-id">${r.beneficiary_id}</span>
+      </div>
+      <div class="detail">${renderDetail(r.detail)}</div>
+      <div class="hash-chip">hash ${r.hash}</div>
+    </div>
+    <div class="right-col"><div class="ts">${new Date(r.ts).toLocaleTimeString()}</div></div>
+  `;
+  root.appendChild(el);
+});
+document.getElementById("row-count-pill").textContent = ROWS.length + " action" + (ROWS.length === 1 ? "" : "s") + " recorded";
+</script>
+
+</body>
+</html>
