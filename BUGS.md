@@ -1193,3 +1193,221 @@ else.
 Document organisation creation as a prerequisite for the org-data/grants API (and expose/point
 to the call that creates one), or clarify that `OrgDataClient` targets enterprise orgs, not
 individual tenant DIDs.
+
+---
+
+> Entries below (BUG-018 …) are from a second no-deadline **live bug-hunting round**.
+
+## BUG-018 — Cross-tenant authorization is untestable with a throwaway identity: the credit floor rejects the call before any grant/authz check runs
+
+**Severity:** Medium (security-review obstacle; the actual cross-tenant authz behavior is undetermined — see open question)
+**Area:** Cross-tenant invocation / authorization / metering order
+**Status:** **[OPEN — security question undetermined]** confirmed live that credit is checked before authz; the authz outcome itself could not be observed.
+
+### What we were trying to do
+Answer the highest-value open security question: when a **genuinely different DID** (not the
+single-DID fallback) calls `executeBusinessContract` against AidLink's verification contract
+`check-eligibility` **with no grant in place**, does the platform (a) cleanly reject, (b)
+silently succeed (a serious finding — any DID could read another tenant's contract output), or
+(c) something else?
+
+### What actually happens
+A fresh key → new DID `did:t3n:b6cc…b91e` (confirmed `≠` our verification DID), then:
+```
+B → executeBusinessContract({ tenant: A, contract: "aidlink",
+                              functionName: "check-eligibility", input: { beneficiary_id } })
+→ 403 forbidden: InsufficientCredit (account=b6cc…, required=10000000000, available=0)
+```
+The call is rejected on the **10,000-token credit floor (BUG-015) before any cross-tenant
+grant/authorization is evaluated** — so the security-relevant question (clean authz rejection
+vs. silent cross-tenant read) is **masked** and remains **undetermined**.
+
+### Why this matters
+1. **Ordering finding:** credit is enforced ahead of cross-tenant authz. A caller with no
+   credit never reaches the authz layer.
+2. **Security-review obstacle:** because a fresh DID gets 0 welcome grant and there is **no SDK
+   funding/transfer path** (BUG-015), a researcher *cannot* probe the cross-tenant
+   authorization boundary with a disposable identity — testing it costs a second, separately
+   funded, claimed account (≥10,000 tokens). That raises the bar for legitimate security
+   testing of exactly the boundary that matters most for a multi-tenant agent platform.
+
+### Open question / how to close it
+Needs a **second, separately-claimed, funded DID** (different email → its own welcome grant
+clearing the floor). With that, repeat the call and record whether the uninvited cross-tenant
+`check-eligibility` is rejected (and the exact error) or silently returns the decision. Until
+then, the authz behavior of `executeBusinessContract` for an uninvited foreign caller is an
+open question — flagged to the maintainer to provide/seed a second funded DID.
+
+### Suggested fix (platform)
+Evaluate cross-tenant authorization *before* (or alongside) the credit check, so an
+unauthorized caller gets a deterministic authz rejection rather than a credit error — and
+provide a testnet faucet / SDK transfer so the boundary is testable with throwaway identities.
+
+---
+
+## BUG-019 — The resolved `{{profile.*}}` schema, mapped (the doc Terminal3 hasn't published) — input field names ≠ resolved paths, and there is no field-name allow-list
+
+**Severity:** Medium/High (you cannot reliably author `{{profile.*}}` markers without this map; the platform publishes none of it)
+**Area:** Placeholders / resolved-profile schema
+**Status:** **[OPEN — documented here in lieu of platform docs]** mapped live 2026-06-23 by probing every field through `http-with-placeholders`.
+
+### Method
+For each candidate field, `probe-placeholder` templates `{{profile.<field>}}`, the host resolves
+it (or not) on the outbound stack, and the echo endpoint reports the substituted value. Outcome
+classes: **RESOLVED** (value substituted), **EMPTY/ABSENT** (`placeholder-unknown`), **DENIED**
+(`placeholder-denied`). PII masked to first char + length.
+
+### The map (claim-created profile: name + email + role populated)
+| `{{profile.<field>}}` | outcome | note |
+|---|---|---|
+| `first_name` | **RESOLVED** | `O…`, 6 chars ("Olivia") |
+| `last_name` | **RESOLVED** | `G…`, 6 chars ("Gungin") |
+| `role` | **RESOLVED** | 13 chars — populated by the claim flow (not shown in the dashboard Profile tab) |
+| `verified_contacts.email.value` | **RESOLVED** | 21 chars (the on-file email) |
+| `email_address` | EMPTY/ABSENT | **flat input name does NOT resolve** — the email lives at `verified_contacts.email.value` |
+| `phone_number` | EMPTY/ABSENT | (the resolved path would be `verified_contacts.phone.value`, also empty here) |
+| `verified_contacts.phone.value` | EMPTY/ABSENT | phone not verified on this profile |
+| `country_of_residence` | EMPTY/ABSENT | empty on this profile |
+| `document_issuance_country` | EMPTY/ABSENT | empty |
+| `ssn` | EMPTY/ABSENT | empty |
+| `address` | EMPTY/ABSENT | empty |
+| `campaign_code` | EMPTY/ABSENT | empty |
+| `date_of_birth` | EMPTY/ABSENT | empty |
+| `gender` | EMPTY/ABSENT | empty |
+| `bank_account` | EMPTY/ABSENT | custom key — no value (see BUG-006) |
+| `iban` | EMPTY/ABSENT | custom key — no value |
+| `nonexistent_field_xyz` | EMPTY/ABSENT | arbitrary name → **`placeholder-unknown`, NOT `placeholder-denied`** |
+
+### Findings
+1. **Resolved schema ≠ SDK input schema.** `email_address` (a real `UserInputProfile` *input*
+   field) does **not** resolve; the resolvable path is the nested `verified_contacts.email.value`.
+   So markers must target the **host-side resolved profile**, whose shape differs from the SDK's
+   `UserInputProfile` field names — concrete proof of the divergence flagged in BUG-006.
+2. **No field-name allow-list.** `nonexistent_field_xyz`, `bank_account`, `iban` all return
+   `placeholder-unknown` (EMPTY/ABSENT) — **never** `placeholder-denied`. So the host accepts
+   *any* `{{profile.<name>}}` path and resolves it if a value exists; it does not reject unknown
+   names. (`placeholder-denied` is reserved for non-`profile` namespaces / malformed markers.)
+3. **EMPTY/ABSENT conflates "field empty" with "no resolved mapping."** Both yield
+   `placeholder-unknown`, so an empty known field and an unmapped custom key are
+   indistinguishable from the outside. Open follow-up that would fully close BUG-006: write a
+   value into an empty known field (e.g. `country_of_residence`) and into a custom key
+   (`bank_account`) via `submitUserInput`, then re-probe — if the known field resolves but the
+   custom key still doesn't, the resolved schema is a real allow-list; if both resolve, any
+   written field works. (Not done unprompted — it writes to the real profile; flagged to the
+   maintainer.)
+
+### Side-finding — undocumented egress rate limit
+The first pass hit **`HTTP 500 too_many_requests: quota exceeded`** on the 11th probe within a
+minute. This is the tenant quota **`outbox_calls_per_minute_max: 10`** (visible in
+`tenant.me().quotas`) enforced on `http`/`http-with-placeholders` egress. Undocumented in the
+narrative docs; a contract doing >10 outbound calls/min will be throttled with a 500.
+
+### Suggested fix
+Publish the canonical resolved-profile schema (every resolvable path, e.g.
+`verified_contacts.{email,phone}.value`, and how it maps from the `UserInputProfile` input
+names), state that unknown `profile.*` names resolve to `placeholder-unknown` rather than being
+rejected, and document the per-minute outbox egress cap.
+
+---
+
+## BUG-020 — A contract version bump assigns a NEW `contract_id`, which silently loses access to existing KV maps (ACLs reference the old id) — an undocumented upgrade footgun
+
+**Severity:** High (a routine version upgrade silently breaks a working contract's data access)
+**Area:** Contract lifecycle / KV ACLs
+**Status:** **[OPEN]** confirmed live 2026-06-23.
+
+### What we found (contract lifecycle, end-to-end live)
+| Action | Result |
+|---|---|
+| `register aidlink @0.1.1` (higher version) | ✅ OK — **new `contract_id=447`** (the 0.1.0 contract was `445`) |
+| `register aidlink @0.1.0` (non-increasing) | ⛔ `contract version invalid: version 0.1.0 is not higher than current version 0.1.1` |
+| `invoke aidlink @0.1.1` (the new version) | ⛔ **`kv read: kv_store.get on 'z:<tid>:eligibility' read denied: access denied`** |
+| `register aidlink-lifecycle @0.1.0` (throwaway) | ✅ OK — `contract_id=448` |
+| `disable(aidlink-lifecycle)` | ✅ `{}` |
+| `invoke` after disable | ⛔ `403 forbidden: contract z:<tid>:aidlink-lifecycle is Disabled` |
+| `enable(aidlink-lifecycle)` | ✅ `{}` (the "Disabled" error clears) |
+| `unregister` while enabled | ⛔ `contract must be disabled before it can be unregistered` |
+| `disable` → `unregister` | ✅ `{}` then `{}` (unregister works once disabled) |
+
+### The footgun (headline)
+Registering a **new version** of a contract mints a **new `contract_id`** (445 → 447). But KV
+map ACLs are keyed by `contract_id` — our `eligibility` map was created with
+`readers/writers: { only: [445] }`. So the freshly-registered **0.1.1 (id 447) is denied read
+access** to the very map the 0.1.0 (id 445) contract created and uses: `read denied: access
+denied`. The same happened to the throwaway (id 448). **A version upgrade therefore silently
+breaks a contract's own data access** unless you also `tenant.maps.update` every map to add the
+new `contract_id` to its reader/writer sets. Nothing documents this; the upgrade looks
+successful and only fails at runtime on the first KV read.
+
+### Lifecycle method behavior (all confirmed, as documented + a few undocumented details)
+- **Version monotonicity** is enforced with the exact error above (matches `common-errors.md`).
+- **`disable`** works; a disabled contract returns `403 ... is Disabled` on invoke.
+- **`enable`** works (clears the Disabled state).
+- **`unregister`** has an undocumented precondition: the contract **must be disabled first**
+  (`contract must be disabled before it can be unregistered`); after `disable` it succeeds.
+
+### Side note (positive security signal)
+This run also demonstrates **per-`contract_id` KV ACL enforcement**: contracts 447 and 448 —
+same tenant, same WASM, different `contract_id` — were **denied** reading the map owned by 445.
+The ACL is enforced per contract id, not per tenant (relevant to BUG-021 / cross-tenant KV).
+
+### Suggested fix
+Either keep `contract_id` stable across version bumps, or have `maps.create`/`register`
+support ACLs keyed by contract *name* (tail) rather than the numeric id, and document that a
+version bump requires re-granting map ACLs. Document the `disable`-before-`unregister` rule.
+
+---
+
+## BUG-021 — Private KV is properly protected, but the documented public-KV exposure mechanism is broken (two ways)
+
+**Severity:** Medium (the security posture is GOOD; the bug is that the *public* path is misdocumented/non-functional)
+**Area:** KV maps / public exposure / cross-tenant access
+**Status:** **[OPEN]** confirmed live 2026-06-23.
+
+### What we were trying to do
+Confirm AidLink's private `eligibility` / `secrets` maps cannot be read across the tenant
+boundary, and characterise the public-KV read path for contrast.
+
+### Security result — private maps are NOT leaked (good)
+The unauthenticated public-KV endpoint returns **404** for every private map + key:
+```
+GET {node}/api/dev/public-kv/<tid>/eligibility        → HTTP 404
+GET {node}/api/dev/public-kv/<tid>/secrets            → HTTP 404
+GET {node}/api/dev/public-kv/<tid>/eligibility/ben_001→ HTTP 404
+```
+Combined with the **per-`contract_id` ACL enforcement** demonstrated in BUG-020 (contracts
+447/448 — same tenant, different id — were denied reading 445's map), private KV is properly
+access-controlled: no public-endpoint leak, and even same-tenant contracts with the wrong id
+are denied. A foreign DID has no contract under our `tid` and cannot register one (it would hit
+the credit floor, BUG-018/BUG-015), so it has no in-TEE path to the map either.
+
+### The bug — the documented *public* read path doesn't work (two independent breakages)
+`create-kv-maps.md` says a public map is "World-readable via `/api/dev/public-kv/<tid>/<tail>`"
+and that the "tail must prefix with `public:`". Neither holds:
+1. **You cannot create a `public:`-prefixed tail.** `maps.create({ tail: "public:probe", … })`
+   is rejected: `Tenant name tail must match /^[a-zA-Z0-9_-][a-zA-Z0-9_.-]{0,127}$/` — the regex
+   **forbids the colon**, so the documented `public:` prefix is impossible to create.
+2. **A `visibility:"public"` map is not served at the documented endpoint.** Creating
+   `maps.create({ tail: "probe", visibility: "public", readers: "all" })` succeeds and seeding a
+   value succeeds, but `GET /api/dev/public-kv/<tid>/probe` (and `/probe/hello`) both return
+   **404**. So the public-read endpoint does not serve a `visibility:"public"` map by tail.
+
+So the public-KV feature, as documented, is non-functional on this cluster: the `public:` tail
+is uncreatable, and a public-visibility map isn't reachable at the documented URL. (Throwaway
+`probe` map deleted after the test.)
+
+### Why it matters
+A developer following `create-kv-maps.md` to publish world-readable data cannot do it by the
+documented method — both the tail convention and the endpoint contradict reality. (The flip
+side — that this means private data is never accidentally exposed — is reassuring, but the
+documented public path should either work or be corrected.)
+
+### Open sub-item
+A direct cross-tenant *read attempt from a funded foreign DID* (vs. the public endpoint) shares
+BUG-018's blocker: a fresh DID hits the credit floor before any KV/authz check, and there is no
+SDK funding path. Needs a second funded DID to complete (flagged to maintainer).
+
+### Suggested fix
+Either make `visibility:"public"` maps served at `/api/dev/public-kv/<tid>/<tail>`, or correct
+`create-kv-maps.md` to the actual mechanism; and reconcile the "`public:` tail prefix"
+instruction with the tail-validation regex that forbids colons.
