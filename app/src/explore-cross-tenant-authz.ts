@@ -21,10 +21,15 @@ import {
   eth_get_address,
   metamask_sign,
   createEthAuthInput,
+  formatTokens,
 } from "@terminal3/t3n-sdk";
 
 const VERIFY_DID = process.env.AIDLINK_VERIFY_DID ?? "did:t3n:5cc23ceebac85b5e55476a4b0d8a0b3a74c77f2d";
 const CONTRACT_TAIL = "aidlink";
+const CREDIT_FLOOR = 10_000_000_000; // 10k tokens (BUG-015)
+// Caller B: the operator's separately-claimed FUNDED second DID (SECOND_KEY). If absent we fall
+// back to a fresh 0-balance key — which only reproduces the credit-floor-masked case (BUG-018).
+const SECOND_KEY = process.env.SECOND_KEY;
 
 async function main() {
   if (process.env.AIDLINK_CONFIRM_METERED !== "1") {
@@ -35,16 +40,27 @@ async function main() {
   const baseUrl = getNodeUrl();
   const wasm = await loadWasmComponent();
 
-  // Caller B: a genuinely different identity (fresh key → new DID), NO grant from the
-  // verification tenant (A).
-  const key = "0x" + randomBytes(32).toString("hex");
+  // Caller B: the operator's funded second DID (SECOND_KEY), or a fresh 0-balance key.
+  const key = SECOND_KEY ?? "0x" + randomBytes(32).toString("hex");
+  const usingFunded = Boolean(SECOND_KEY);
   const address = eth_get_address(key);
   const client = new T3nClient({ baseUrl, wasmComponent: wasm, handlers: { EthSign: metamask_sign(address, undefined, key) } });
   await client.handshake();
   const callerDid = (await client.authenticate(createEthAuthInput(address))).value;
-  console.log(`[xauthz] CALLER (B, fresh, no grant): ${callerDid}`);
+  console.log(`[xauthz] CALLER (B${usingFunded ? ", SECOND_KEY/funded" : ", fresh/0-balance"}, no grant): ${callerDid}`);
   console.log(`[xauthz] TARGET (A, verification):   ${VERIFY_DID}  contract=${CONTRACT_TAIL}::check-eligibility`);
-  console.log(`[xauthz] (B and A are DIFFERENT DIDs: ${callerDid !== VERIFY_DID})\n`);
+  console.log(`[xauthz] (B and A are DIFFERENT DIDs: ${callerDid !== VERIFY_DID})`);
+  if (callerDid === VERIFY_DID) {
+    console.error("[xauthz] ✗ SECOND_KEY resolves to the SAME DID as A — not a cross-tenant test. Abort.");
+    process.exit(2);
+  }
+
+  // PRE-CHECK: is B above the 10k-token credit floor? Only then is the authz result meaningful
+  // (otherwise the call is masked by InsufficientCredit — the BUG-018 confound).
+  const bal = (await client.getUsage()).balance.available;
+  const aboveFloor = bal >= CREDIT_FLOOR;
+  console.log(`[xauthz] B balance: ${bal} base units = ${formatTokens(bal)} tokens — ` +
+    `${aboveFloor ? "✅ ABOVE the 10k floor (credit confound CLEARED)" : "⛔ BELOW the floor (result will be credit-masked, not an authz answer)"}\n`);
 
   const tenant = new TenantClient({ t3n: client, baseUrl, tenantDid: callerDid, environment: "testnet" });
 

@@ -508,6 +508,23 @@ direct corollary of BUG-005's metering opacity.)
 > *correct* design — not a guess, but the only design the platform actually supports. The
 > resolved schema and this rule remain undocumented (the original gap below stands).
 
+> ### ✅ SETTLED 2026-06-24 — the profile is a fixed write-time ALLOW-LIST; bank_account can never be stored
+> A write test removed the last ambiguity (does a value make a field resolve, or is there a
+> schema allow-list?). Writing FAKE values via `submitUserInput`:
+> - **Custom key `bank_account="DUMMY-TEST-BANK-ACCT-0000"` → REJECTED at write:**
+>   `Profile validation failed: ValidationResult { issues: [ValidationIssue { path: [],
+>   error: UnrecognizedKeys { keys: ["bank_account"] } }] }`. The server enforces a **fixed
+>   field allow-list at write time** — a custom key cannot be stored at all.
+> - **Known field `country_of_residence="ZZ"` → written OK (`tx:321:74393`) → then RESOLVES
+>   `"ZZ"`.** A previously-empty *known* field resolves once it has a value.
+>
+> **Conclusion:** `bank_account` is not "empty," it is **unstorable** — the profile schema
+> rejects it. So raw bank details *cannot* go in the profile by any means, and the
+> org-data-ref fallback is **mandatory, not merely preferred**. Bonus finding: the SDK type
+> `UserInputProfile` declares `[key: string]: unknown` (implying arbitrary keys are accepted),
+> but the server rejects unrecognized keys (`UnrecognizedKeys`) — a **type-vs-server-validation
+> mismatch**. (The fake `country_of_residence="ZZ"` value persists on the test profile.)
+
 ### Live finding 2026-06-22 (egress wall, now superseded by the result above) — egress is checked BEFORE placeholder resolution
 With a real balance, we registered the contract (`contract_id=445`) and ran the cheapest
 probe live (self-call, `pii_did` = our own DID, one templated field). The call reached the
@@ -1234,9 +1251,27 @@ vs. silent cross-tenant read) is **masked** and remains **undetermined**.
 ### Open question / how to close it
 Needs a **second, separately-claimed, funded DID** (different email → its own welcome grant
 clearing the floor). With that, repeat the call and record whether the uninvited cross-tenant
-`check-eligibility` is rejected (and the exact error) or silently returns the decision. Until
-then, the authz behavior of `executeBusinessContract` for an uninvited foreign caller is an
-open question — flagged to the maintainer to provide/seed a second funded DID.
+`check-eligibility` is rejected (and the exact error) or silently returns the decision.
+
+### A funded second DID is NOT self-serviceable (2026-06-24 — circular block confirmed)
+We attempted to self-provision a funded second identity programmatically. It is **impossible**
+on this testnet via any SDK path — a hard circular dependency:
+- A fresh key authenticates to a new DID with **0 balance** (no welcome grant on auth — the
+  grant only comes from the dashboard claim flow). → blocked on the 10k-token floor (BUG-015).
+- The only programmatic mint is testnet self-admit, `submitUserInput({ becomeDevTenant: true })`,
+  but on a fresh DID it fails: **`email_not_verified: caller has no verified email … Run
+  otp-request + otp-verify first`**.
+- Binding/verifying an email requires the OTP roundtrip — which is **inert on this cluster**
+  (BUG-007: `otpRequest` mints no state, `otpVerify` → "no OTP state found"). So the email can
+  never be verified, so self-admit can never run, so the DID can never be funded.
+
+**Net:** `fresh DID (0 balance) → needs funding → needs self-admit → needs verified email →
+needs OTP → OTP inert → back to start.` A funded second identity can only be created by the
+**dashboard claim flow** (a real email + web form), which an autonomous agent cannot perform.
+So the cross-tenant authz security test **requires the operator to claim a second account on a
+different email and hand over the key** — flagged to the maintainer. Worth noting as its own
+DX/security-testing gap: a researcher cannot stand up a second identity to probe the
+multi-tenant boundary without operator intervention.
 
 ### Suggested fix (platform)
 Evaluate cross-tenant authorization *before* (or alongside) the credit check, so an
@@ -1287,14 +1322,15 @@ classes: **RESOLVED** (value substituted), **EMPTY/ABSENT** (`placeholder-unknow
    `placeholder-unknown` (EMPTY/ABSENT) — **never** `placeholder-denied`. So the host accepts
    *any* `{{profile.<name>}}` path and resolves it if a value exists; it does not reject unknown
    names. (`placeholder-denied` is reserved for non-`profile` namespaces / malformed markers.)
-3. **EMPTY/ABSENT conflates "field empty" with "no resolved mapping."** Both yield
-   `placeholder-unknown`, so an empty known field and an unmapped custom key are
-   indistinguishable from the outside. Open follow-up that would fully close BUG-006: write a
-   value into an empty known field (e.g. `country_of_residence`) and into a custom key
-   (`bank_account`) via `submitUserInput`, then re-probe — if the known field resolves but the
-   custom key still doesn't, the resolved schema is a real allow-list; if both resolve, any
-   written field works. (Not done unprompted — it writes to the real profile; flagged to the
-   maintainer.)
+3. **EMPTY/ABSENT conflates "field empty" with "no resolved mapping" — now disambiguated by a
+   write test (2026-06-24, see BUG-006 "SETTLED"):** writing a value into the empty *known*
+   field `country_of_residence="ZZ"` makes it **RESOLVE** (`"ZZ"`); writing the *custom* key
+   `bank_account` is **REJECTED at write** (`UnrecognizedKeys`). So the schema is a **fixed
+   allow-list enforced at WRITE time**, not at resolution time: a known field resolves once it
+   has a value; an unrecognized key can never be stored (and so never resolves). This refines
+   finding #2 — resolution is lenient (any `profile.<name>` → `placeholder-unknown` if absent),
+   but *writes* are strict (unknown keys → `UnrecognizedKeys`). The SDK's `UserInputProfile`
+   `[key: string]: unknown` is misleading: the server does not accept arbitrary keys.
 
 ### Side-finding — undocumented egress rate limit
 The first pass hit **`HTTP 500 too_many_requests: quota exceeded`** on the 11th probe within a
